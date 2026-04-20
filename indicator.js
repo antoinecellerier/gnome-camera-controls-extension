@@ -16,11 +16,12 @@ const VERIFY_DELAY_MS = 300;
 
 const CameraControlSliderItem = GObject.registerClass(
     class CameraControlSliderItem extends PopupMenu.PopupBaseMenuItem {
-        _init(control, devPath, autoManaged = false) {
+        _init(control, devPath, autoManaged = false, onChanged = null) {
             super._init({activate: false, can_focus: false, reactive: true});
             this._control = control;
             this._devPath = devPath;
             this._autoManaged = autoManaged;
+            this._onChanged = onChanged;
             this._pendingTimeout = 0;
             this._verifyTimeout = 0;
             this._writeSerial = 0;
@@ -86,6 +87,7 @@ const CameraControlSliderItem = GObject.registerClass(
 
         _onSliderChanged() {
             this._valueLabel.text = String(this._currentValue());
+            this._onChanged?.();
             if (this._autoManaged) return;
 
             this._setPending(false);
@@ -146,6 +148,21 @@ const CameraControlSliderItem = GObject.registerClass(
             };
         }
 
+        isAtDefault() {
+            const def = this._control.default;
+            if (!Number.isFinite(def)) return true;
+            return this._currentValue() === def;
+        }
+
+        resetToDefault() {
+            if (this._autoManaged) return;
+            const def = this._control.default;
+            if (!Number.isFinite(def)) return;
+            const range = this._control.max - this._control.min;
+            const frac = range > 0 ? (def - this._control.min) / range : 0;
+            this._slider.value = Math.max(0, Math.min(1, frac));
+        }
+
         destroy() {
             if (this._pendingTimeout) {
                 GLib.source_remove(this._pendingTimeout);
@@ -177,11 +194,12 @@ async function verifyWrite(devPath, name, expected, onResult) {
 
 const CameraControlBoolItem = GObject.registerClass(
     class CameraControlBoolItem extends PopupMenu.PopupSwitchMenuItem {
-        _init(control, devPath, autoManaged = false) {
+        _init(control, devPath, autoManaged = false, onChanged = null) {
             super._init(control.name, control.current === 1);
             this._control = control;
             this._devPath = devPath;
             this._autoManaged = autoManaged;
+            this._onChanged = onChanged;
             this._userValue = control.current === 1 ? 1 : 0;
             this._pending = false;
             this._writeSerial = 0;
@@ -201,6 +219,7 @@ const CameraControlBoolItem = GObject.registerClass(
 
         async _onToggled(state) {
             this._userValue = state ? 1 : 0;
+            this._onChanged?.();
             if (this._autoManaged) return;
             this._setPending(false);
             const serial = ++this._writeSerial;
@@ -239,6 +258,22 @@ const CameraControlBoolItem = GObject.registerClass(
             };
         }
 
+        isAtDefault() {
+            const def = this._control.default;
+            if (!Number.isFinite(def)) return true;
+            return this._userValue === def;
+        }
+
+        resetToDefault() {
+            if (this._autoManaged) return;
+            const def = this._control.default;
+            if (!Number.isFinite(def)) return;
+            const state = def === 1;
+            if (this._userValue === (state ? 1 : 0)) return;
+            this.setToggleState(state);
+            this._onToggled(state);
+        }
+
         destroy() {
             if (this._verifyTimeout) {
                 GLib.source_remove(this._verifyTimeout);
@@ -251,11 +286,12 @@ const CameraControlBoolItem = GObject.registerClass(
 
 const CameraControlMenuItem = GObject.registerClass(
     class CameraControlMenuItem extends PopupMenu.PopupSubMenuMenuItem {
-        _init(control, devPath, autoManaged = false) {
+        _init(control, devPath, autoManaged = false, onChanged = null) {
             super._init('', false);
             this._control = control;
             this._devPath = devPath;
             this._autoManaged = autoManaged;
+            this._onChanged = onChanged;
             this._userValue = control.current;
             this._pending = false;
             this._writeSerial = 0;
@@ -306,6 +342,7 @@ const CameraControlMenuItem = GObject.registerClass(
             this._userValue = value;
             this._updateSelectionMarks();
             this._renderLabel();
+            this._onChanged?.();
             if (this._autoManaged) return;
             this._setPending(false);
             const serial = ++this._writeSerial;
@@ -343,6 +380,20 @@ const CameraControlMenuItem = GObject.registerClass(
             };
         }
 
+        isAtDefault() {
+            const def = this._control.default;
+            if (!Number.isFinite(def)) return true;
+            return this._userValue === def;
+        }
+
+        resetToDefault() {
+            if (this._autoManaged) return;
+            const def = this._control.default;
+            if (!Number.isFinite(def)) return;
+            if (this._userValue === def) return;
+            this._onSelect(def);
+        }
+
         destroy() {
             if (this._verifyTimeout) {
                 GLib.source_remove(this._verifyTimeout);
@@ -353,15 +404,15 @@ const CameraControlMenuItem = GObject.registerClass(
     }
 );
 
-function makeControlItem(control, devPath, autoManaged) {
+function makeControlItem(control, devPath, autoManaged, onChanged) {
     switch (control.type) {
         case 'bool':
-            return new CameraControlBoolItem(control, devPath, autoManaged);
+            return new CameraControlBoolItem(control, devPath, autoManaged, onChanged);
         case 'menu':
         case 'intmenu':
-            return new CameraControlMenuItem(control, devPath, autoManaged);
+            return new CameraControlMenuItem(control, devPath, autoManaged, onChanged);
         default:
-            return new CameraControlSliderItem(control, devPath, autoManaged);
+            return new CameraControlSliderItem(control, devPath, autoManaged, onChanged);
     }
 }
 
@@ -433,15 +484,23 @@ export const CameraControlsIndicator = GObject.registerClass(
             this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
             const locked = autoManaged ?? new Set();
+            const onChanged = () => this._updateResetVisibility();
             let sawQueued = false, sawLocked = false;
             for (const control of controls) {
                 const isLocked = locked.has?.(control.name) ?? false;
-                const item = makeControlItem(control, devPath, isLocked);
+                const item = makeControlItem(control, devPath, isLocked, onChanged);
                 this._sliderItems.push(item);
                 this.menu.addMenuItem(item);
                 if (isLocked) sawLocked = true;
                 else sawQueued = true;
             }
+
+            this._resetSeparator = new PopupMenu.PopupSeparatorMenuItem();
+            this.menu.addMenuItem(this._resetSeparator);
+            this._resetItem = new PopupMenu.PopupMenuItem('Reset to defaults');
+            this._resetItem.connect('activate', () => this._resetAll());
+            this.menu.addMenuItem(this._resetItem);
+            this._updateResetVisibility();
 
             const legendParts = [];
             if (sawQueued) legendParts.push('⌛ = queued for next camera open');
@@ -463,11 +522,29 @@ export const CameraControlsIndicator = GObject.registerClass(
             };
         }
 
+        _updateResetVisibility() {
+            if (!this._resetItem) return;
+            const anyChanged = (this._sliderItems ?? []).some(it => {
+                const {autoManaged} = it.getIntendedValue();
+                return !autoManaged && !it.isAtDefault();
+            });
+            this._resetItem.visible = anyChanged;
+            this._resetSeparator.visible = anyChanged;
+        }
+
+        _resetAll() {
+            for (const item of this._sliderItems ?? [])
+                item.resetToDefault();
+            this._updateResetVisibility();
+        }
+
         hideAll() {
             this.visible = false;
             this.menu.removeAll();
             this._sliderItems = [];
             this._devPath = null;
+            this._resetItem = null;
+            this._resetSeparator = null;
         }
     }
 );

@@ -30,6 +30,10 @@ Adding a new control means adding it to this list plus, if new hardware, updatin
   
   Types we explicitly don't render: `int64`, `string`, `bitmask`, `button`, `ctrl_class`. These are either not meaningfully tunable at a UI level or would need bespoke widgets.
 
+## Reset to defaults
+
+Each control's `default=` from `v4l2-ctl --list-ctrls-menus` is captured at enumeration time. A **Reset to defaults** menu item appears at the bottom of the control list whenever at least one non-auto-managed control holds a value different from its reported default. Clicking it drives each non-auto-managed control back to its default via the same write path as any other user interaction — so on IPU6 the same mid-stream `⌛` queuing behavior applies, and values land on the next stream start. Auto-managed (🔒) controls are skipped. Controls for which `v4l2-ctl` omitted a `default=` field are ignored by this action (rare, but possible with exotic drivers).
+
 ## Clamping & argv safety
 
 - Slider values are clamped to the `[min, max]` reported by `v4l2-ctl --list-ctrls` before being formatted.
