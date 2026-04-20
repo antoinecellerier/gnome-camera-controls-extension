@@ -46,6 +46,18 @@ When the camera goes idle (PipeWire `state-changed` away from RUNNING), the exte
 
 On UVC webcams (no libcamera AE, no mid-stream refusal) every control behaves normally — the verify read-back matches, no `⌛`, no queuing.
 
+## Detecting fully auto-managed controls (e.g. AGC-enabled IPA)
+
+The queued flow works on an AGC-disabled IPU6 setup because flushed-on-idle values survive into the next capture. With AGC *enabled* (stock libcamera tuning) they don't — libcamera writes exposure/gain per frame and the user's flushed value is overwritten on the first frame of the next stream.
+
+The extension detects this by keeping a per-device `lastFlushedByDev` map of values it wrote on the previous idle and, on the next live event, comparing each fresh readback to that map. If a control's fresh value is more than 1% of range off from what we flushed, it's marked **auto-managed** for this showControl cycle:
+
+- The slider is still draggable (the row stays interactive in case the user's config changes), but it's visually **greyed out** with a 🔒 and a strikethrough on the name.
+- The slider's `notify::value` handler no longer calls `setControl` for that row — writing is futile.
+- The flush-on-idle path still writes *all* controls unconditionally, so the detection self-heals: if the user later disables AGC, the next live cycle's comparison will pass and the 🔒 comes off.
+
+This turns the unactionable case (AGC enabled on IPU6) from silent failure into a visible "libcamera is driving this" marker.
+
 Workarounds for users who need live mid-stream exposure/gain on IPU6: install Intel's `ipu6-camera-bins` + vendor IPA, or drive libcamera directly (`gst-launch-1.0 libcamerasrc ae-enable=false exposure-time=N …`) rather than going through PipeWire.
 
 ## What we do NOT do

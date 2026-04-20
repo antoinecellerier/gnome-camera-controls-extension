@@ -14,10 +14,11 @@ const VERIFY_DELAY_MS = 300;
 
 const CameraControlSliderItem = GObject.registerClass(
     class CameraControlSliderItem extends PopupMenu.PopupBaseMenuItem {
-        _init(control, devPath) {
+        _init(control, devPath, autoManaged = false) {
             super._init({activate: false, can_focus: false, reactive: true});
             this._control = control;
             this._devPath = devPath;
+            this._autoManaged = autoManaged;
             this._pendingTimeout = 0;
             this._verifyTimeout = 0;
             this._writeSerial = 0;
@@ -56,6 +57,15 @@ const CameraControlSliderItem = GObject.registerClass(
             row.add_child(this._valueLabel);
 
             this.add_child(row);
+
+            if (this._autoManaged) this._applyAutoManagedStyling();
+        }
+
+        _applyAutoManagedStyling() {
+            this._nameLabel.text = `${this._control.name} 🔒`;
+            this._nameLabel.set_style('min-width: 9em; color: #999; text-decoration: line-through;');
+            this._valueLabel.set_style('min-width: 3.5em; text-align: right; color: #999;');
+            this._slider.set_style('min-width: 10em; margin: 0 8px; opacity: 0.5;');
         }
 
         _currentValue() {
@@ -73,10 +83,10 @@ const CameraControlSliderItem = GObject.registerClass(
                 this._ignoreNextChange = false;
                 return;
             }
-            // User interaction clears any prior "pending" marking; verify
-            // will re-apply it after the write if the subdev refused.
-            this._setPending(false);
             this._valueLabel.text = String(this._currentValue());
+            if (this._autoManaged) return; // writing is futile; just track the slider
+
+            this._setPending(false);
             if (this._pendingTimeout) GLib.source_remove(this._pendingTimeout);
             this._pendingTimeout = GLib.timeout_add(GLib.PRIORITY_DEFAULT, DEBOUNCE_MS, () => {
                 this._pendingTimeout = 0;
@@ -142,6 +152,7 @@ const CameraControlSliderItem = GObject.registerClass(
                 min: this._control.min,
                 max: this._control.max,
                 pending: this._pending === true,
+                autoManaged: this._autoManaged === true,
             };
         }
 
@@ -208,7 +219,7 @@ export const CameraControlsIndicator = GObject.registerClass(
             this.visible = true;
         }
 
-        showControl({description, devPath, controls}) {
+        showControl({description, devPath, controls, autoManaged}) {
             this.menu.removeAll();
             this._icon.icon_name = 'camera-photo-symbolic';
             this._sliderItems = [];
@@ -224,15 +235,25 @@ export const CameraControlsIndicator = GObject.registerClass(
 
             this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
+            const locked = autoManaged ?? new Set();
+            let sawQueued = false, sawLocked = false;
             for (const control of controls) {
-                const item = new CameraControlSliderItem(control, devPath);
+                const isLocked = locked.has?.(control.name) ?? false;
+                const item = new CameraControlSliderItem(control, devPath, isLocked);
                 this._sliderItems.push(item);
                 this.menu.addMenuItem(item);
+                if (isLocked) sawLocked = true;
+                else sawQueued = true;
             }
 
-            const footer = new PopupMenu.PopupMenuItem('⌛ = queued for next camera open', {reactive: false});
-            footer.label.set_style('font-size: smaller; opacity: 0.5;');
-            this.menu.addMenuItem(footer);
+            const legendParts = [];
+            if (sawQueued) legendParts.push('⌛ = queued for next camera open');
+            if (sawLocked) legendParts.push('🔒 = auto-managed by libcamera');
+            if (legendParts.length) {
+                const footer = new PopupMenu.PopupMenuItem(legendParts.join(' · '), {reactive: false});
+                footer.label.set_style('font-size: smaller; opacity: 0.5;');
+                this.menu.addMenuItem(footer);
+            }
 
             this.visible = true;
         }

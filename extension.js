@@ -15,6 +15,11 @@ export default class CameraControlsExtension extends Extension {
             Main.panel.addToStatusArea(this.uuid, this._indicator);
             this._candidates = null;
             this._monitor = null;
+            // Per-device map of what we flushed to the subdev on the previous
+            // idle. On the next live event we compare against fresh readbacks
+            // to detect controls whose value was silently rewritten by
+            // libcamera (e.g. AGC still enabled in the IPA tuning).
+            this._lastFlushedByDev = new Map();
             this._run().catch(e => logError?.(e, 'CameraControls._run'));
         } catch (e) {
             logError?.(e, 'CameraControls.enable');
@@ -127,11 +132,29 @@ export default class CameraControlsExtension extends Extension {
         }
         if (!this._enabled) return;
 
+        const autoManaged = this._detectAutoManaged(matched.devPath, freshControls);
+
         this._indicator.showControl({
             description: snapshot?.description ?? 'Camera',
             devPath: matched.devPath,
             controls: freshControls,
+            autoManaged,
         });
+    }
+
+    _detectAutoManaged(devPath, freshControls) {
+        const prev = this._lastFlushedByDev.get(devPath);
+        if (!prev) return new Set();
+        const out = new Set();
+        for (const c of freshControls) {
+            const expected = prev.get(c.name);
+            if (expected === undefined) continue;
+            const range = c.max - c.min;
+            const tolerance = Math.max(1, Math.round(range * 0.01));
+            if (Math.abs(c.current - expected) > tolerance)
+                out.add(c.name);
+        }
+        return out;
     }
 
     _onIdle() {
@@ -147,14 +170,23 @@ export default class CameraControlsExtension extends Extension {
         if (!devPath || !controls?.length) return;
         // With the camera closed, the sensor subdev accepts writes again;
         // anything the user set while streaming applies now and will be in
-        // effect the next time a client opens the camera.
+        // effect the next time a client opens the camera — unless libcamera's
+        // AE/AGC rewrites it on next stream start, which we detect on the
+        // following live event by comparing freshControls to this map.
+        const flushed = new Map();
         for (const c of controls) {
+            // Flush every control (even ones previously marked auto-managed):
+            // the next live event's readback vs. this map tells us whether
+            // they're still auto-managed, so the flag self-heals if the user
+            // later changes their libcamera tuning.
             try {
                 await setControl(devPath, c.name, c.value, {min: c.min, max: c.max});
+                flushed.set(c.name, c.value);
             } catch (e) {
                 logError?.(e, `flush setControl ${c.name}`);
             }
         }
+        if (flushed.size > 0) this._lastFlushedByDev.set(devPath, flushed);
     }
 
     _onMonitorError(err) {
@@ -197,6 +229,7 @@ export default class CameraControlsExtension extends Extension {
             this._indicator?.destroy();
             this._indicator = null;
             this._candidates = null;
+            this._lastFlushedByDev = null;
         } catch (e) {
             logError?.(e, 'CameraControls.disable');
         }
