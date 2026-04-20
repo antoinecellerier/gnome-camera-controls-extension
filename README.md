@@ -4,6 +4,10 @@ Shows sliders for v4l2 camera controls (exposure, gain, brightness) in the top p
 
 See [docs/](docs/) for architecture, detection, device mapping, prereqs, and testing notes.
 
+## License
+
+GPL-3.0-or-later — see [LICENSE](LICENSE).
+
 ## Runtime dependencies (Debian/Ubuntu)
 
 ```

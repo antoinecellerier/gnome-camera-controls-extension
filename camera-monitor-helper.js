@@ -1,4 +1,6 @@
 #!/usr/bin/gjs -m
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
 // Standalone helper: runs all WirePlumber/PipeWire code in a child process so
 // a native crash here CANNOT take down gnome-shell. Speaks JSON-lines on stdout.
 //

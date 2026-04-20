@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
 // CameraMonitor runs the helper (camera-monitor-helper.js) as a child gjs
 // process. All WirePlumber/PipeWire API contact happens in that child, so a
 // libpipewire/libwireplumber SIGSEGV can never take gnome-shell with it.
