@@ -1,0 +1,80 @@
+import GLib from 'gi://GLib';
+import Gio from 'gi://Gio';
+
+async function spawn(argv) {
+    return new Promise((resolve, reject) => {
+        let proc;
+        try {
+            proc = new Gio.Subprocess({
+                argv,
+                flags: Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE,
+            });
+            proc.init(null);
+        } catch (e) {
+            reject(e);
+            return;
+        }
+        proc.communicate_utf8_async(null, null, (_, res) => {
+            try {
+                const [, stdout, stderr] = proc.communicate_utf8_finish(res);
+                if (proc.get_exit_status() !== 0) {
+                    reject(new Error(`${argv.join(' ')}: ${stderr.trim()}`));
+                } else {
+                    resolve(stdout);
+                }
+            } catch (e) {
+                reject(e);
+            }
+        });
+    });
+}
+
+function readTextFile(path) {
+    try {
+        const [ok, bytes] = GLib.file_get_contents(path);
+        if (!ok) return null;
+        return new TextDecoder().decode(bytes).trim();
+    } catch {
+        return null;
+    }
+}
+
+function hasUdevadm() {
+    return GLib.find_program_in_path('udevadm') !== null;
+}
+
+async function sysfsPathFor(devPath) {
+    if (!hasUdevadm()) return null;
+    try {
+        const out = await spawn(['udevadm', 'info', '--query=path', `--name=${devPath}`]);
+        return out.trim();
+    } catch {
+        return null;
+    }
+}
+
+function acpiPathFromSysfsPath(sysfsPath) {
+    if (!sysfsPath) return null;
+    let p = '/sys' + (sysfsPath.startsWith('/') ? sysfsPath : `/${sysfsPath}`);
+    while (p && p !== '/sys' && p !== '/') {
+        const acpi = readTextFile(`${p}/firmware_node/path`);
+        if (acpi) return acpi;
+        const slash = p.lastIndexOf('/');
+        if (slash <= 0) break;
+        const parent = p.slice(0, slash);
+        if (parent === p) break;
+        p = parent;
+    }
+    return null;
+}
+
+export async function resolveCandidate(devPath) {
+    const sysfsPath = await sysfsPathFor(devPath);
+    const acpiPath = acpiPathFromSysfsPath(sysfsPath);
+    return {devPath, sysfsPath, acpiPath};
+}
+
+export function sysfsAncestor(parentSysfs, childSysfs) {
+    if (!parentSysfs || !childSysfs) return false;
+    return childSysfs === parentSysfs || childSysfs.startsWith(parentSysfs + '/');
+}

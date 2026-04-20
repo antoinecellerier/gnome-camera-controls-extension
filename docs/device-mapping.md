@@ -19,17 +19,20 @@ for path in /dev/v4l-subdev* , /dev/video*:
 On each `camera-live` event with a running `Wp.Node` we match one candidate:
 
 1. **v4l2 backend path.** If the node has `api.v4l2.path`, match it to a candidate's `devPath` directly. Usually a UVC webcam.
-2. **libcamera backend path.** Else, look up the parent `Wp.Device` via `device.id` in the same ObjectManager. Read its `object.path` / `device.bus-path` and resolve to a sysfs path. Pick the candidate whose `sysfsPath` is that path, or a descendant. Usually an IPU6 sensor subdev.
-3. **No match.** Log once and show "Active camera not recognized" in the menu. Never fall back to a guess.
+2. **libcamera backend path (ACPI match).** Else, look up the parent `Wp.Device` via `device.id` in the same ObjectManager and read its `api.libcamera.path`. On Intel IPU6 hardware this is the sensor's ACPI path (e.g. `\_SB_.PC00.LNK1`). Compare it directly against each candidate's `acpiPath` — which we read at enumerate time from `/sys/.../firmware_node/path` as we walk up from the `/dev/v4l-subdev*` sysfs node.
+3. **libcamera backend fallback (sysfs prefix).** If ACPI match fails, try a `device.bus-path` → sysfs-ancestor match. This catches cameras whose libcamera path isn't ACPI-based.
+4. **No match.** Log once and show "Active camera not recognized" in the menu. Never fall back to a guess.
+
+On single-camera IPU6 machines this comfortably picks the right subdev without requiring the fallback; on multi-camera machines each camera's `api.libcamera.path` resolves to a distinct ACPI identifier that uniquely addresses one sensor.
 
 ## Worked examples
 
 ### IPU6 / libcamera (this machine)
 
-- Running node: `Wp.Node` with `media.class=Video/Source`, no `api.v4l2.path`, `device.id=N`.
-- Parent `Wp.Device N`: `device.api=libcamera`, `object.path` resolves under `/sys/devices/pci0000:00/0000:00:05.0/...`.
-- Candidate devPath `/dev/v4l-subdev4`, sysfsPath `/sys/devices/pci0000:00/0000:00:05.0/.../v4l-subdev4`.
-- Match succeeds via sysfs prefix.
+- Running node: `Wp.Node` with `media.class=Video/Source`, no `api.v4l2.path`, `device.id=87`.
+- Parent `Wp.Device 87`: `device.api=libcamera`, `api.libcamera.path=\_SB_.PC00.LNK1`.
+- Candidate `/dev/v4l-subdev4`: `acpiPath=\_SB_.PC00.LNK1` (read from `/sys/.../i2c-INT3474:01/firmware_node/path`).
+- Match succeeds on ACPI equality at step 2.
 
 ### UVC (typical laptop / USB webcam)
 

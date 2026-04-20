@@ -5,6 +5,7 @@ import {probe} from './prereqs.js';
 import {CameraControlsIndicator} from './indicator.js';
 import {CameraMonitor} from './cameraMonitor.js';
 import {enumerateCandidates, listControls} from './v4l2.js';
+import {resolveCandidate, sysfsAncestor} from './sysfs.js';
 
 export default class CameraControlsExtension extends Extension {
     enable() {
@@ -61,7 +62,11 @@ export default class CameraControlsExtension extends Extension {
 
         if (!this._candidates) {
             try {
-                this._candidates = await enumerateCandidates();
+                const raw = await enumerateCandidates();
+                this._candidates = await Promise.all(raw.map(async (c) => {
+                    const info = await resolveCandidate(c.devPath).catch(() => ({}));
+                    return {...c, ...info};
+                }));
             } catch (e) {
                 logError?.(e, 'enumerateCandidates');
                 return;
@@ -110,18 +115,31 @@ export default class CameraControlsExtension extends Extension {
     _matchCandidate(node) {
         if (!this._candidates?.length) return null;
 
-        // Direct v4l2 backend: node.api.v4l2.path matches a candidate devPath.
+        // 1) v4l2 backend (UVC): node's api.v4l2.path equals a candidate's devPath.
         const v4l2Path = CameraMonitor.getProp(node, 'api.v4l2.path');
         if (v4l2Path) {
             const hit = this._candidates.find(c => c.devPath === v4l2Path);
             if (hit) return hit;
         }
 
-        // libcamera backend: sysfs-prefix match via parent Device.
-        // Will be implemented in the sysfs-mapping iteration. For now,
-        // fall back to the single-candidate case (this IPU6 machine has
-        // exactly one, so this degrades gracefully).
-        if (this._candidates.length === 1) return this._candidates[0];
+        // 2) libcamera backend: resolve parent Wp.Device, compare ACPI path
+        //    (or sysfs prefix as a fallback) against each candidate.
+        const deviceId = CameraMonitor.getProp(node, 'device.id');
+        const parent = deviceId && this._monitor
+            ? this._monitor.findDeviceByBoundId(parseInt(deviceId, 10))
+            : null;
+        if (parent) {
+            const libcameraAcpi = CameraMonitor.getProp(parent, 'api.libcamera.path');
+            if (libcameraAcpi) {
+                const hit = this._candidates.find(c => c.acpiPath === libcameraAcpi);
+                if (hit) return hit;
+            }
+            const busPath = CameraMonitor.getProp(parent, 'device.bus-path');
+            if (busPath) {
+                const hit = this._candidates.find(c => c.sysfsPath && sysfsAncestor(busPath, c.sysfsPath));
+                if (hit) return hit;
+            }
+        }
 
         return null;
     }
