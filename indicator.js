@@ -1,8 +1,82 @@
 import GObject from 'gi://GObject';
+import GLib from 'gi://GLib';
 import St from 'gi://St';
+import Clutter from 'gi://Clutter';
 
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
+import {Slider} from 'resource:///org/gnome/shell/ui/slider.js';
+
+import {setControl} from './v4l2.js';
+
+const DEBOUNCE_MS = 100;
+
+const CameraControlSliderItem = GObject.registerClass(
+    class CameraControlSliderItem extends PopupMenu.PopupBaseMenuItem {
+        _init(control, devPath) {
+            super._init({activate: false, can_focus: false, reactive: true});
+            this._control = control;
+            this._devPath = devPath;
+            this._pendingTimeout = 0;
+
+            const range = control.max - control.min;
+            const startFrac = range > 0 ? (control.current - control.min) / range : 0;
+
+            const nameLabel = new St.Label({
+                text: control.name,
+                y_align: Clutter.ActorAlign.CENTER,
+                x_expand: false,
+                style: 'min-width: 10em;',
+            });
+            this._valueLabel = new St.Label({
+                text: String(control.current),
+                y_align: Clutter.ActorAlign.CENTER,
+                x_expand: false,
+                style: 'min-width: 4em; text-align: right;',
+            });
+
+            this._slider = new Slider(Math.max(0, Math.min(1, startFrac)));
+            this._slider.x_expand = true;
+
+            this._slider.connect('notify::value', () => this._onSliderChanged());
+
+            this.add_child(nameLabel);
+            this.add_child(this._slider);
+            this.add_child(this._valueLabel);
+        }
+
+        _currentValue() {
+            const {min, max} = this._control;
+            return Math.max(min, Math.min(max, Math.round(min + this._slider.value * (max - min))));
+        }
+
+        _onSliderChanged() {
+            this._valueLabel.text = String(this._currentValue());
+            if (this._pendingTimeout) GLib.source_remove(this._pendingTimeout);
+            this._pendingTimeout = GLib.timeout_add(GLib.PRIORITY_DEFAULT, DEBOUNCE_MS, () => {
+                this._pendingTimeout = 0;
+                this._flushAsync();
+                return GLib.SOURCE_REMOVE;
+            });
+        }
+
+        async _flushAsync() {
+            try {
+                await setControl(this._devPath, this._control.name, this._currentValue(), this._control);
+            } catch (e) {
+                logError?.(e, `setControl ${this._devPath} ${this._control.name}`);
+            }
+        }
+
+        destroy() {
+            if (this._pendingTimeout) {
+                GLib.source_remove(this._pendingTimeout);
+                this._pendingTimeout = 0;
+            }
+            super.destroy();
+        }
+    }
+);
 
 export const CameraControlsIndicator = GObject.registerClass(
     class CameraControlsIndicator extends PanelMenu.Button {
@@ -53,11 +127,24 @@ export const CameraControlsIndicator = GObject.registerClass(
             this.visible = true;
         }
 
-        showControl() {
+        showControl({description, devPath, controls}) {
             this.menu.removeAll();
             this._icon.icon_name = 'camera-photo-symbolic';
-            const placeholder = new PopupMenu.PopupMenuItem('(sliders not implemented yet)', {reactive: false});
-            this.menu.addMenuItem(placeholder);
+
+            const header = new PopupMenu.PopupMenuItem(description ?? 'Camera', {reactive: false});
+            header.label.set_style('font-weight: bold;');
+            this.menu.addMenuItem(header);
+
+            const pathItem = new PopupMenu.PopupMenuItem(devPath, {reactive: false});
+            pathItem.label.set_style('font-size: smaller; opacity: 0.6;');
+            this.menu.addMenuItem(pathItem);
+
+            this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+
+            for (const control of controls) {
+                this.menu.addMenuItem(new CameraControlSliderItem(control, devPath));
+            }
+
             this.visible = true;
         }
 
