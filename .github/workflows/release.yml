@@ -17,3 +17,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: murar8/gnome-extensions-action@0.1.1
+        id: package
+      - uses: actions/upload-artifact@v7
+        with:
+          path: ${{ steps.package.outputs.zip-file }}
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            ${{ steps.package.outputs.zip-file }}
+
