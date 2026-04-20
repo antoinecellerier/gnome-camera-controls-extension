@@ -26,23 +26,32 @@ const CameraControlSliderItem = GObject.registerClass(
                 text: control.name,
                 y_align: Clutter.ActorAlign.CENTER,
                 x_expand: false,
-                style: 'min-width: 10em;',
-            });
-            this._valueLabel = new St.Label({
-                text: String(control.current),
-                y_align: Clutter.ActorAlign.CENTER,
-                x_expand: false,
-                style: 'min-width: 4em; text-align: right;',
+                style: 'min-width: 9em;',
             });
 
             this._slider = new Slider(Math.max(0, Math.min(1, startFrac)));
             this._slider.x_expand = true;
-
+            this._slider.y_align = Clutter.ActorAlign.CENTER;
+            this._slider.set_style('min-width: 10em; margin: 0 8px;');
             this._slider.connect('notify::value', () => this._onSliderChanged());
 
-            this.add_child(nameLabel);
-            this.add_child(this._slider);
-            this.add_child(this._valueLabel);
+            this._valueLabel = new St.Label({
+                text: String(control.current),
+                y_align: Clutter.ActorAlign.CENTER,
+                x_expand: false,
+                style: 'min-width: 3.5em; text-align: right;',
+            });
+
+            const row = new St.BoxLayout({
+                vertical: false,
+                x_expand: true,
+                style: 'spacing: 4px;',
+            });
+            row.add_child(nameLabel);
+            row.add_child(this._slider);
+            row.add_child(this._valueLabel);
+
+            this.add_child(row);
         }
 
         _currentValue() {
