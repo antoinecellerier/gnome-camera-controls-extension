@@ -1,0 +1,137 @@
+import GLib from 'gi://GLib';
+import Gio from 'gi://Gio';
+
+const CONTROL_ALLOWLIST = new Set([
+    'exposure',
+    'exposure_absolute',
+    'analogue_gain',
+    'digital_gain',
+    'gain',
+    'brightness',
+]);
+
+const MAX_DEVICE_INDEX = 64;
+const V4L2_CTL = 'v4l2-ctl';
+
+function enumerateDevicePaths() {
+    const paths = [];
+    for (const prefix of ['/dev/v4l-subdev', '/dev/video']) {
+        for (let i = 0; i < MAX_DEVICE_INDEX; i++) {
+            const p = `${prefix}${i}`;
+            if (GLib.file_test(p, GLib.FileTest.EXISTS))
+                paths.push(p);
+        }
+    }
+    return paths;
+}
+
+async function spawn(argv) {
+    return new Promise((resolve, reject) => {
+        let proc;
+        try {
+            proc = new Gio.Subprocess({
+                argv,
+                flags: Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE,
+            });
+            proc.init(null);
+        } catch (e) {
+            reject(e);
+            return;
+        }
+        proc.communicate_utf8_async(null, null, (_, res) => {
+            try {
+                const [, stdout, stderr] = proc.communicate_utf8_finish(res);
+                const exit = proc.get_exit_status();
+                if (exit !== 0) {
+                    const err = new Error(`${argv.join(' ')} exited ${exit}: ${stderr.trim()}`);
+                    err.exitStatus = exit;
+                    err.stderr = stderr;
+                    reject(err);
+                    return;
+                }
+                resolve(stdout);
+            } catch (e) {
+                reject(e);
+            }
+        });
+    });
+}
+
+function parseListCtrls(stdout) {
+    const controls = [];
+    for (const rawLine of stdout.split('\n')) {
+        const m = rawLine.match(/^\s*(\w+)\s+0x[0-9a-f]+\s+\(([^)]+)\)\s*:\s*(.*)$/);
+        if (!m) continue;
+        const [, name, type, rest] = m;
+
+        const flagsIdx = rest.indexOf('flags=');
+        const preFlags = flagsIdx >= 0 ? rest.slice(0, flagsIdx) : rest;
+        const flagsStr = flagsIdx >= 0 ? rest.slice(flagsIdx + 'flags='.length) : '';
+        const flags = flagsStr.split(',').map(s => s.trim()).filter(Boolean);
+
+        const kv = {};
+        for (const kvMatch of preFlags.matchAll(/(\w+)=(-?\d+)/g))
+            kv[kvMatch[1]] = Number(kvMatch[2]);
+
+        controls.push({
+            name,
+            type,
+            min: kv.min,
+            max: kv.max,
+            step: kv.step ?? 1,
+            default: kv.default,
+            current: kv.value,
+            flags,
+            readOnly: flags.includes('read-only'),
+            inactive: flags.includes('inactive'),
+        });
+    }
+    return controls;
+}
+
+function filterControls(controls) {
+    return controls.filter(c =>
+        CONTROL_ALLOWLIST.has(c.name) &&
+        !c.readOnly &&
+        !c.inactive &&
+        Number.isFinite(c.min) &&
+        Number.isFinite(c.max) &&
+        c.type === 'int'
+    );
+}
+
+export async function listControls(devPath) {
+    const stdout = await spawn([V4L2_CTL, '-d', devPath, '--list-ctrls']);
+    return filterControls(parseListCtrls(stdout));
+}
+
+export async function enumerateCandidates() {
+    const candidates = [];
+    for (const devPath of enumerateDevicePaths()) {
+        try {
+            const controls = await listControls(devPath);
+            if (controls.length > 0)
+                candidates.push({devPath, controls});
+        } catch {
+            // Device has no controls at all, or isn't queryable — skip silently.
+        }
+    }
+    return candidates;
+}
+
+export async function setControl(devPath, name, value, {min, max}) {
+    if (!CONTROL_ALLOWLIST.has(name))
+        throw new Error(`Control not in allowlist: ${name}`);
+    const clamped = Math.max(min, Math.min(max, Math.round(value)));
+    await spawn([V4L2_CTL, '-d', devPath, '-c', `${name}=${clamped}`]);
+    return clamped;
+}
+
+export async function readControlValue(devPath, name) {
+    if (!CONTROL_ALLOWLIST.has(name))
+        throw new Error(`Control not in allowlist: ${name}`);
+    const stdout = await spawn([V4L2_CTL, '-d', devPath, '-C', name]);
+    const m = stdout.match(/:\s*(-?\d+)/);
+    if (!m) throw new Error(`Could not parse value from: ${stdout}`);
+    return Number(m[1]);
+}
