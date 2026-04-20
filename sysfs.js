@@ -56,9 +56,10 @@ async function sysfsPathFor(devPath) {
 }
 
 function acpiPathFromSysfsPath(sysfsPath) {
-    if (!sysfsPath) return null;
+    if (!sysfsPath || sysfsPath.includes('..')) return null;
     let p = '/sys' + (sysfsPath.startsWith('/') ? sysfsPath : `/${sysfsPath}`);
     while (p && p !== '/sys' && p !== '/') {
+        if (!p.startsWith('/sys/')) return null; // defensive: never leave /sys
         const acpi = readTextFile(`${p}/firmware_node/path`);
         if (acpi) return acpi;
         const slash = p.lastIndexOf('/');

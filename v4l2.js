@@ -12,8 +12,21 @@ const CONTROL_ALLOWLIST = new Set([
     'brightness',
 ]);
 
+// v4l2 control names are lowercase ASCII letters, digits and underscores,
+// with a leading letter. Enforce this shape on *every* control name we
+// ever pass to v4l2-ctl, including names that may later come from user
+// preferences — an argv array already blocks shell injection, but this
+// also blocks creative nonsense like `--set-ctrl=…` being smuggled in
+// as a control name.
+const CONTROL_NAME_RE = /^[a-z][a-z0-9_]*$/;
+
 const MAX_DEVICE_INDEX = 64;
 const V4L2_CTL = 'v4l2-ctl';
+
+function assertControlName(name) {
+    if (typeof name !== 'string' || !CONTROL_NAME_RE.test(name))
+        throw new Error(`Invalid control name: ${JSON.stringify(name)}`);
+}
 
 function enumerateDevicePaths() {
     const paths = [];
@@ -122,16 +135,16 @@ export async function enumerateCandidates() {
 }
 
 export async function setControl(devPath, name, value, {min, max}) {
-    if (!CONTROL_ALLOWLIST.has(name))
-        throw new Error(`Control not in allowlist: ${name}`);
+    assertControlName(name);
+    if (!Number.isFinite(value) || !Number.isFinite(min) || !Number.isFinite(max))
+        throw new Error(`setControl numeric args required: value=${value} min=${min} max=${max}`);
     const clamped = Math.max(min, Math.min(max, Math.round(value)));
     await spawn([V4L2_CTL, '-d', devPath, '-c', `${name}=${clamped}`]);
     return clamped;
 }
 
 export async function readControlValue(devPath, name) {
-    if (!CONTROL_ALLOWLIST.has(name))
-        throw new Error(`Control not in allowlist: ${name}`);
+    assertControlName(name);
     const stdout = await spawn([V4L2_CTL, '-d', devPath, '-C', name]);
     const m = stdout.match(/:\s*(-?\d+)/);
     if (!m) throw new Error(`Could not parse value from: ${stdout}`);
