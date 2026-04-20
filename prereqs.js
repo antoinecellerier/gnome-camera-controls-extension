@@ -2,24 +2,25 @@
 
 import GLib from 'gi://GLib';
 
-async function loadWp() {
-    try {
-        const mod = await import('gi://Wp?version=0.5');
-        return mod.default;
-    } catch {
-        return null;
-    }
-}
+// The ESM module map caches rejected imports for the life of the process, so
+// a straight `await import('gi://Wp?version=0.5')` that failed before the
+// user installed the typelib would keep failing on Retry. Busting the cache
+// with a per-probe nonce forces a fresh typelib lookup each call.
+let _wpProbeNonce = 0;
 
 async function checkWpTypelib() {
-    if (await loadWp()) return null;
-    return {
-        id: 'wp-typelib',
-        label: 'WirePlumber GIR typelib missing',
-        explanation: 'Needed for event-driven camera detection.',
-        fixCommand: 'sudo apt install gir1.2-wp-0.5',
-        blocking: true,
-    };
+    try {
+        await import(`gi://Wp?version=0.5&probe=${_wpProbeNonce++}`);
+        return null;
+    } catch {
+        return {
+            id: 'wp-typelib',
+            label: 'WirePlumber GIR typelib missing',
+            explanation: 'Needed for event-driven camera detection.',
+            fixCommand: 'sudo apt install gir1.2-wp-0.5',
+            blocking: true,
+        };
+    }
 }
 
 function checkProgram({name, label, explanation, fixCommand, blocking = true}) {
