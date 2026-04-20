@@ -17,7 +17,7 @@ async function checkWpTypelib() {
             id: 'wp-typelib',
             label: 'WirePlumber GIR typelib missing',
             explanation: 'Needed for event-driven camera detection.',
-            fixCommand: 'sudo apt install gir1.2-wp-0.5',
+            fixCommand: 'install gir1.2-wp-0.5 or equivalent',
             blocking: true,
         };
     }
@@ -34,7 +34,7 @@ function checkGjs() {
         id: 'bin-gjs',
         label: 'gjs not on PATH',
         explanation: 'Required to run the camera monitor helper as a subprocess.',
-        fixCommand: 'sudo apt install gjs',
+        fixCommand: 'install gjs',
         blocking: true,
     };
 }
@@ -48,13 +48,13 @@ export async function probe() {
         name: 'v4l2-ctl',
         label: 'v4l2-ctl not on PATH',
         explanation: 'Needed to read and write camera controls.',
-        fixCommand: 'sudo apt install v4l-utils',
+        fixCommand: 'install v4l-utils',
     }));
     push(checkProgram({
         name: 'udevadm',
         label: 'udevadm not on PATH',
         explanation: 'Needed to map the active libcamera node to its v4l2 control device.',
-        fixCommand: 'sudo apt install udev',
+        fixCommand: 'install udev',
         blocking: false,
     }));
     push(checkGjs());
