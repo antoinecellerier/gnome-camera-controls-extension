@@ -44,7 +44,7 @@ Each control's `default=` from `v4l2-ctl --list-ctrls-menus` is captured at enum
 Two quite different things happen on IPU6 with the libcamera "simple" IPA, depending on whether AGC is enabled in the IPA tuning:
 
 - **AGC enabled (upstream default).** libcamera's auto-gain loop rewrites `exposure` and `analogue_gain` on the sensor subdev every frame. Our `v4l2-ctl -c` writes are clobbered almost immediately. No user-facing path from this extension can win that race.
-- **AGC disabled** (as in `~/stuff/ipu6-camera-notes.md` — user edits `/usr/share/libcamera/ipa/simple/ov2740.yaml` to drop the `Agc:` algorithm). libcamera no longer rewrites per frame, but the sensor subdev's exposure/gain registers still refuse mid-stream `v4l2-ctl` writes: the value read back doesn't change until the stream stops. Whatever value is in place when streaming *starts* is what stays. `digital_gain` is different — it lives in software post-processing and accepts writes at any time.
+- **AGC disabled** (by editing the per-sensor tuning file under `/usr/share/libcamera/ipa/simple/` to drop the `Agc:` algorithm). libcamera no longer rewrites per frame, but the sensor subdev's exposure/gain registers still refuse mid-stream `v4l2-ctl` writes: the value read back doesn't change until the stream stops. Whatever value is in place when streaming *starts* is what stays. `digital_gain` is different — it lives in software post-processing and accepts writes at any time.
 
 The UX works around this with a "queued" state. After each slider write, the extension reads back 300 ms later via `v4l2-ctl -C`. If the value drifted (>1% of range) from what we wrote:
 

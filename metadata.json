@@ -4,6 +4,6 @@
   "description": "Adjust v4l2 camera controls (exposure, gain, brightness) from the top panel while a camera is live.",
   "shell-version": ["45", "46", "47", "48", "49"],
   "version": 1,
-  "url": "https://github.com/cellerier/gnome-camera-controls-extension",
+  "url": "https://github.com/antoinecellerier/gnome-camera-controls-extension",
   "settings-schema": "org.gnome.shell.extensions.camera-controls"
 }

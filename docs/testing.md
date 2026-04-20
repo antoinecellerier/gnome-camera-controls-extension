@@ -14,9 +14,10 @@ journalctl --user -f /usr/bin/gnome-shell    # tail logs while testing
 1. **Idle.** No camera client open → no indicator. `wpctl status` shows no Video/Source in state RUNNING.
 2. **Open a webcam consumer.** A real app (`cheese`, Firefox on webcamtests.com, Chromium) or a headless trigger:
    ```
-   gst-launch-1.0 pipewiresrc target-object=libcamera_input.__SB_.PC00.LNK1 ! videoconvert ! fakesink
+   # find the node.name from `pw-cli ls Node` then substitute it below
+   gst-launch-1.0 pipewiresrc target-object=<NODE_NAME> ! videoconvert ! fakesink
    ```
-   (substitute your node's `node.name` from `pw-cli ls Node` output). `libcamerasrc` or `gst-launch-1.0 v4l2src` bypass PipeWire and will NOT trigger the monitor — by design, since anything bypassing PipeWire is something GNOME Shell wouldn't know about either. The indicator should appear *immediately* (event-driven; no poll window).
+   `libcamerasrc` or `gst-launch-1.0 v4l2src` bypass PipeWire and will NOT trigger the monitor — by design, since anything bypassing PipeWire is something GNOME Shell wouldn't know about either. The indicator should appear *immediately* (event-driven; no poll window).
 3. **Controls visible.** Clicking the indicator shows sliders at the values reported by `v4l2-ctl -d <matched> --list-ctrls`. The matched device is logged to journalctl.
 4. **Slide each slider** → verify with `v4l2-ctl -d <matched> -C <ctrl>` that the value written matches the slider position.
 5. **Multi-camera** (if available): plug in a second camera, open it from a different app, verify the sliders switch to *that* camera's controls.
@@ -34,5 +35,5 @@ See [prereqs.md](prereqs.md) for how to simulate each. For each failure, verify:
 
 ## Hardware-specific notes
 
-- **IPU6 (this dev machine).** Matched device is `/dev/v4l-subdev4`. `wpctl status` shows the camera under the libcamera source client. `media.class=Video/Source` node has no `api.v4l2.path`.
-- **UVC webcam (portable target).** Matched device is `/dev/video0`. `media.class=Video/Source` node has `api.v4l2.path=/dev/video0`.
+- **IPU6 (libcamera backend).** The matched device is typically the sensor subdev (e.g. `/dev/v4l-subdev4`). `wpctl status` shows the camera under the libcamera source client. The `media.class=Video/Source` node has no `api.v4l2.path`; the match goes via ACPI path on the parent Device (see [device-mapping.md](device-mapping.md)).
+- **UVC webcam (v4l2 backend).** The matched device is typically `/dev/video0`. The `media.class=Video/Source` node has `api.v4l2.path=/dev/video0` and matches directly.

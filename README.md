@@ -1,6 +1,6 @@
 # Camera Controls — GNOME Shell extension
 
-Shows sliders for v4l2 camera controls (exposure, gain, brightness) in the top panel **only while a camera is streaming**. Uses WirePlumber GIR bindings for event-driven camera-live detection (no polling) and `v4l2-ctl` for the control plane.
+Surfaces v4l2 camera controls (exposure, gain, brightness, auto-exposure, white-balance, …) in the top panel **only while a camera is streaming**. Each control is rendered according to its v4l2 type: integers as sliders, booleans as switches, menus as submenus. Uses WirePlumber GIR bindings for event-driven camera-live detection (no polling) and `v4l2-ctl` for the control plane.
 
 See [docs/](docs/) for architecture, detection, device mapping, prereqs, preferences, security, and testing notes.
 
