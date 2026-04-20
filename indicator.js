@@ -7,9 +7,10 @@ import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {Slider} from 'resource:///org/gnome/shell/ui/slider.js';
 
-import {setControl} from './v4l2.js';
+import {setControl, readControlValue} from './v4l2.js';
 
 const DEBOUNCE_MS = 100;
+const VERIFY_DELAY_MS = 300;
 
 const CameraControlSliderItem = GObject.registerClass(
     class CameraControlSliderItem extends PopupMenu.PopupBaseMenuItem {
@@ -18,11 +19,14 @@ const CameraControlSliderItem = GObject.registerClass(
             this._control = control;
             this._devPath = devPath;
             this._pendingTimeout = 0;
+            this._verifyTimeout = 0;
+            this._writeSerial = 0;
+            this._ignoreNextChange = false;
 
             const range = control.max - control.min;
             const startFrac = range > 0 ? (control.current - control.min) / range : 0;
 
-            const nameLabel = new St.Label({
+            this._nameLabel = new St.Label({
                 text: control.name,
                 y_align: Clutter.ActorAlign.CENTER,
                 x_expand: false,
@@ -47,7 +51,7 @@ const CameraControlSliderItem = GObject.registerClass(
                 x_expand: true,
                 style: 'spacing: 4px;',
             });
-            row.add_child(nameLabel);
+            row.add_child(this._nameLabel);
             row.add_child(this._slider);
             row.add_child(this._valueLabel);
 
@@ -59,21 +63,78 @@ const CameraControlSliderItem = GObject.registerClass(
             return Math.max(min, Math.min(max, Math.round(min + this._slider.value * (max - min))));
         }
 
+        _valueToFrac(value) {
+            const range = this._control.max - this._control.min;
+            return range > 0 ? (value - this._control.min) / range : 0;
+        }
+
         _onSliderChanged() {
+            if (this._ignoreNextChange) {
+                this._ignoreNextChange = false;
+                return;
+            }
+            // User interaction clears any prior "overridden" marking.
+            this._setOverridden(false);
             this._valueLabel.text = String(this._currentValue());
             if (this._pendingTimeout) GLib.source_remove(this._pendingTimeout);
             this._pendingTimeout = GLib.timeout_add(GLib.PRIORITY_DEFAULT, DEBOUNCE_MS, () => {
                 this._pendingTimeout = 0;
-                this._flushAsync();
+                this._flushAsync().catch(e => logError?.(e));
                 return GLib.SOURCE_REMOVE;
             });
         }
 
         async _flushAsync() {
+            const serial = ++this._writeSerial;
+            const target = this._currentValue();
             try {
-                await setControl(this._devPath, this._control.name, this._currentValue(), this._control);
+                await setControl(this._devPath, this._control.name, target, this._control);
             } catch (e) {
                 logError?.(e, `setControl ${this._devPath} ${this._control.name}`);
+                return;
+            }
+            if (this._verifyTimeout) GLib.source_remove(this._verifyTimeout);
+            this._verifyTimeout = GLib.timeout_add(GLib.PRIORITY_DEFAULT, VERIFY_DELAY_MS, () => {
+                this._verifyTimeout = 0;
+                this._verifyAsync(target, serial).catch(e => logError?.(e));
+                return GLib.SOURCE_REMOVE;
+            });
+        }
+
+        async _verifyAsync(expected, serial) {
+            if (serial !== this._writeSerial) return;
+            if (this._pendingTimeout) return; // newer drag in-flight
+            let actual;
+            try {
+                actual = await readControlValue(this._devPath, this._control.name);
+            } catch (e) {
+                logError?.(e, `readControlValue ${this._control.name}`);
+                return;
+            }
+            if (serial !== this._writeSerial || this._pendingTimeout) return;
+            const range = this._control.max - this._control.min;
+            const tolerance = Math.max(1, Math.round(range * 0.01));
+            if (Math.abs(actual - expected) > tolerance) {
+                this._snapSliderTo(actual);
+                this._setOverridden(true);
+            }
+        }
+
+        _snapSliderTo(value) {
+            this._valueLabel.text = String(value);
+            this._ignoreNextChange = true;
+            this._slider.value = Math.max(0, Math.min(1, this._valueToFrac(value)));
+        }
+
+        _setOverridden(overridden) {
+            if (this._overridden === overridden) return;
+            this._overridden = overridden;
+            if (overridden) {
+                this._nameLabel.set_style('min-width: 9em; color: #eebb55;');
+                this._nameLabel.text = `⚠ ${this._control.name}`;
+            } else {
+                this._nameLabel.set_style('min-width: 9em;');
+                this._nameLabel.text = this._control.name;
             }
         }
 
@@ -81,6 +142,10 @@ const CameraControlSliderItem = GObject.registerClass(
             if (this._pendingTimeout) {
                 GLib.source_remove(this._pendingTimeout);
                 this._pendingTimeout = 0;
+            }
+            if (this._verifyTimeout) {
+                GLib.source_remove(this._verifyTimeout);
+                this._verifyTimeout = 0;
             }
             super.destroy();
         }
