@@ -4,7 +4,7 @@
   <schema id="org.gnome.shell.extensions.camera-controls"
           path="/org/gnome/shell/extensions/camera-controls/">
     <key name="allowed-controls" type="as">
-      <default>['exposure','exposure_absolute','analogue_gain','digital_gain','gain','brightness']</default>
+      <default>['exposure','analogue_gain','digital_gain','exposure_absolute','exposure_time_absolute','gain','brightness','contrast','saturation','sharpness','backlight_compensation','white_balance_temperature','white_balance_automatic','white_balance_temperature_auto','exposure_dynamic_framerate','auto_exposure','power_line_frequency']</default>
       <summary>v4l2 control names the extension is allowed to expose</summary>
       <description>
         Names of v4l2 controls that, when found on an active camera's v4l2

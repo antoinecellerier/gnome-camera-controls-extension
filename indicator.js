@@ -160,6 +160,211 @@ const CameraControlSliderItem = GObject.registerClass(
     }
 );
 
+function renderStateLabel(baseLabel, {autoManaged, pending}) {
+    if (autoManaged) return `${baseLabel} 🔒`;
+    if (pending) return `${baseLabel} ⌛`;
+    return baseLabel;
+}
+
+async function verifyWrite(devPath, name, expected, onResult) {
+    try {
+        const actual = await readControlValue(devPath, name);
+        onResult(actual);
+    } catch (e) {
+        logError?.(e, `readControlValue ${name}`);
+    }
+}
+
+const CameraControlBoolItem = GObject.registerClass(
+    class CameraControlBoolItem extends PopupMenu.PopupSwitchMenuItem {
+        _init(control, devPath, autoManaged = false) {
+            super._init(control.name, control.current === 1);
+            this._control = control;
+            this._devPath = devPath;
+            this._autoManaged = autoManaged;
+            this._userValue = control.current === 1 ? 1 : 0;
+            this._pending = false;
+            this._writeSerial = 0;
+            this._verifyTimeout = 0;
+            if (autoManaged)
+                this.label.add_style_class_name('ccx-locked-text');
+            this._renderLabel();
+            this.connect('toggled', (_i, state) => this._onToggled(state));
+        }
+
+        _renderLabel() {
+            this.label.text = renderStateLabel(this._control.name, {
+                autoManaged: this._autoManaged,
+                pending: this._pending,
+            });
+        }
+
+        async _onToggled(state) {
+            this._userValue = state ? 1 : 0;
+            if (this._autoManaged) return;
+            this._setPending(false);
+            const serial = ++this._writeSerial;
+            try {
+                await setControl(this._devPath, this._control.name, this._userValue,
+                    {min: 0, max: 1});
+            } catch (e) {
+                logError?.(e, `setControl ${this._control.name}`);
+                return;
+            }
+            if (this._verifyTimeout) GLib.source_remove(this._verifyTimeout);
+            this._verifyTimeout = GLib.timeout_add(GLib.PRIORITY_DEFAULT, VERIFY_DELAY_MS, () => {
+                this._verifyTimeout = 0;
+                verifyWrite(this._devPath, this._control.name, this._userValue, (actual) => {
+                    if (serial !== this._writeSerial) return;
+                    this._setPending(actual !== this._userValue);
+                });
+                return GLib.SOURCE_REMOVE;
+            });
+        }
+
+        _setPending(pending) {
+            if (this._pending === pending) return;
+            this._pending = pending;
+            this._renderLabel();
+        }
+
+        getIntendedValue() {
+            return {
+                name: this._control.name,
+                value: this._userValue,
+                min: 0,
+                max: 1,
+                pending: this._pending === true,
+                autoManaged: this._autoManaged === true,
+            };
+        }
+
+        destroy() {
+            if (this._verifyTimeout) {
+                GLib.source_remove(this._verifyTimeout);
+                this._verifyTimeout = 0;
+            }
+            super.destroy();
+        }
+    }
+);
+
+const CameraControlMenuItem = GObject.registerClass(
+    class CameraControlMenuItem extends PopupMenu.PopupSubMenuMenuItem {
+        _init(control, devPath, autoManaged = false) {
+            super._init('', false);
+            this._control = control;
+            this._devPath = devPath;
+            this._autoManaged = autoManaged;
+            this._userValue = control.current;
+            this._pending = false;
+            this._writeSerial = 0;
+            this._verifyTimeout = 0;
+            this._itemWidgets = new Map();
+
+            this._valueRange = {
+                min: Math.min(...control.items.map(i => i.value)),
+                max: Math.max(...control.items.map(i => i.value)),
+            };
+
+            if (autoManaged)
+                this.label.add_style_class_name('ccx-locked-text');
+
+            for (const item of control.items) {
+                const mi = new PopupMenu.PopupMenuItem('');
+                mi.connect('activate', () => this._onSelect(item.value));
+                this.menu.addMenuItem(mi);
+                this._itemWidgets.set(item.value, mi);
+            }
+
+            this._updateSelectionMarks();
+            this._renderLabel();
+        }
+
+        _currentItemLabel() {
+            return this._control.items.find(i => i.value === this._userValue)?.label
+                ?? String(this._userValue);
+        }
+
+        _renderLabel() {
+            const base = `${this._control.name}: ${this._currentItemLabel()}`;
+            this.label.text = renderStateLabel(base, {
+                autoManaged: this._autoManaged,
+                pending: this._pending,
+            });
+        }
+
+        _updateSelectionMarks() {
+            for (const [value, widget] of this._itemWidgets) {
+                const item = this._control.items.find(i => i.value === value);
+                const marker = value === this._userValue ? '● ' : '  ';
+                widget.label.text = marker + (item?.label ?? String(value));
+            }
+        }
+
+        async _onSelect(value) {
+            this._userValue = value;
+            this._updateSelectionMarks();
+            this._renderLabel();
+            if (this._autoManaged) return;
+            this._setPending(false);
+            const serial = ++this._writeSerial;
+            try {
+                await setControl(this._devPath, this._control.name, value, this._valueRange);
+            } catch (e) {
+                logError?.(e, `setControl ${this._control.name}`);
+                return;
+            }
+            if (this._verifyTimeout) GLib.source_remove(this._verifyTimeout);
+            this._verifyTimeout = GLib.timeout_add(GLib.PRIORITY_DEFAULT, VERIFY_DELAY_MS, () => {
+                this._verifyTimeout = 0;
+                verifyWrite(this._devPath, this._control.name, value, (actual) => {
+                    if (serial !== this._writeSerial) return;
+                    this._setPending(actual !== value);
+                });
+                return GLib.SOURCE_REMOVE;
+            });
+        }
+
+        _setPending(pending) {
+            if (this._pending === pending) return;
+            this._pending = pending;
+            this._renderLabel();
+        }
+
+        getIntendedValue() {
+            return {
+                name: this._control.name,
+                value: this._userValue,
+                min: this._valueRange.min,
+                max: this._valueRange.max,
+                pending: this._pending === true,
+                autoManaged: this._autoManaged === true,
+            };
+        }
+
+        destroy() {
+            if (this._verifyTimeout) {
+                GLib.source_remove(this._verifyTimeout);
+                this._verifyTimeout = 0;
+            }
+            super.destroy();
+        }
+    }
+);
+
+function makeControlItem(control, devPath, autoManaged) {
+    switch (control.type) {
+        case 'bool':
+            return new CameraControlBoolItem(control, devPath, autoManaged);
+        case 'menu':
+        case 'intmenu':
+            return new CameraControlMenuItem(control, devPath, autoManaged);
+        default:
+            return new CameraControlSliderItem(control, devPath, autoManaged);
+    }
+}
+
 export const CameraControlsIndicator = GObject.registerClass(
     class CameraControlsIndicator extends PanelMenu.Button {
         _init() {
@@ -231,7 +436,7 @@ export const CameraControlsIndicator = GObject.registerClass(
             let sawQueued = false, sawLocked = false;
             for (const control of controls) {
                 const isLocked = locked.has?.(control.name) ?? false;
-                const item = new CameraControlSliderItem(control, devPath, isLocked);
+                const item = makeControlItem(control, devPath, isLocked);
                 this._sliderItems.push(item);
                 this.menu.addMenuItem(item);
                 if (isLocked) sawLocked = true;

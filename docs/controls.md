@@ -23,6 +23,12 @@ Adding a new control means adding it to this list plus, if new hardware, updatin
 ## Filters
 
 - Any control with `flags=read-only` or `flags=inactive` is dropped before the UI sees it. Read-only controls on IPU6 subdevs include `camera_orientation`, `camera_sensor_rotation`, `horizontal_blanking`, `link_frequency`, `pixel_rate`.
+- Only four control types are rendered:
+  - **`int`** — slider with value label, debounced writes.
+  - **`bool`** — switch toggle.
+  - **`menu`** / **`intmenu`** — submenu with a radio-style `●` marker on the current pick.
+  
+  Types we explicitly don't render: `int64`, `string`, `bitmask`, `button`, `ctrl_class`. These are either not meaningfully tunable at a UI level or would need bespoke widgets.
 
 ## Clamping & argv safety
 
