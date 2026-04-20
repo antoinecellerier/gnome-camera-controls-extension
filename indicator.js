@@ -73,8 +73,9 @@ const CameraControlSliderItem = GObject.registerClass(
                 this._ignoreNextChange = false;
                 return;
             }
-            // User interaction clears any prior "overridden" marking.
-            this._setOverridden(false);
+            // User interaction clears any prior "pending" marking; verify
+            // will re-apply it after the write if the subdev refused.
+            this._setPending(false);
             this._valueLabel.text = String(this._currentValue());
             if (this._pendingTimeout) GLib.source_remove(this._pendingTimeout);
             this._pendingTimeout = GLib.timeout_add(GLib.PRIORITY_DEFAULT, DEBOUNCE_MS, () => {
