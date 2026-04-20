@@ -13,6 +13,10 @@ export default class CameraControlsExtension extends Extension {
     enable() {
         try {
             this._enabled = true;
+            this._settings = this.getSettings();
+            this._settingsHandler = this._settings.connect(
+                'changed::allowed-controls', () => this._onAllowlistChanged(),
+            );
             this._indicator = new CameraControlsIndicator();
             Main.panel.addToStatusArea(this.uuid, this._indicator);
             this._candidates = null;
@@ -26,6 +30,15 @@ export default class CameraControlsExtension extends Extension {
         } catch (e) {
             logError?.(e, 'CameraControls.enable');
         }
+    }
+
+    _allowlist() {
+        return this._settings?.get_strv('allowed-controls') ?? [];
+    }
+
+    _onAllowlistChanged() {
+        // Next live event will re-enumerate with the new allowlist.
+        this._candidates = null;
     }
 
     async _run() {
@@ -94,7 +107,7 @@ export default class CameraControlsExtension extends Extension {
 
         if (!this._candidates) {
             try {
-                const raw = await enumerateCandidates();
+                const raw = await enumerateCandidates(this._allowlist());
                 this._candidates = await Promise.all(raw.map(async (c) => {
                     const info = await resolveCandidate(c.devPath).catch(() => ({}));
                     return {...c, ...info};
@@ -115,7 +128,7 @@ export default class CameraControlsExtension extends Extension {
 
         let freshControls;
         try {
-            freshControls = await listControls(matched.devPath);
+            freshControls = await listControls(matched.devPath, this._allowlist());
         } catch (e) {
             logError?.(e, `listControls ${matched.devPath}`);
             freshControls = matched.controls;
@@ -209,6 +222,11 @@ export default class CameraControlsExtension extends Extension {
     disable() {
         try {
             this._enabled = false;
+            if (this._settings && this._settingsHandler) {
+                this._settings.disconnect(this._settingsHandler);
+            }
+            this._settings = null;
+            this._settingsHandler = 0;
             this._stopMonitor();
             this._indicator?.destroy();
             this._indicator = null;

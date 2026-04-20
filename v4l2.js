@@ -4,7 +4,7 @@ import GLib from 'gi://GLib';
 
 import {spawn} from './process.js';
 
-const CONTROL_ALLOWLIST = new Set([
+export const DEFAULT_CONTROL_ALLOWLIST = Object.freeze([
     'exposure',
     'exposure_absolute',
     'analogue_gain',
@@ -14,12 +14,11 @@ const CONTROL_ALLOWLIST = new Set([
 ]);
 
 // v4l2 control names are lowercase ASCII letters, digits and underscores,
-// with a leading letter. Enforce this shape on *every* control name we
-// ever pass to v4l2-ctl, including names that may later come from user
-// preferences — an argv array already blocks shell injection, but this
-// also blocks creative nonsense like `--set-ctrl=…` being smuggled in
-// as a control name.
-const CONTROL_NAME_RE = /^[a-z][a-z0-9_]*$/;
+// with a leading letter. Enforce this shape on *every* control name we ever
+// pass to v4l2-ctl, including names coming from user preferences. An argv
+// array already blocks shell injection; this blocks category confusion
+// (e.g. a user-typed 'control name' of `--set-ctrl=…`).
+export const CONTROL_NAME_RE = /^[a-z][a-z0-9_]*$/;
 
 const MAX_DEVICE_INDEX = 64;
 const V4L2_CTL = 'v4l2-ctl';
@@ -73,9 +72,10 @@ function parseListCtrls(stdout) {
     return controls;
 }
 
-function filterControls(controls) {
+function filterControls(controls, allowlist) {
+    const allow = allowlist instanceof Set ? allowlist : new Set(allowlist);
     return controls.filter(c =>
-        CONTROL_ALLOWLIST.has(c.name) &&
+        allow.has(c.name) &&
         !c.readOnly &&
         !c.inactive &&
         Number.isFinite(c.min) &&
@@ -84,16 +84,16 @@ function filterControls(controls) {
     );
 }
 
-export async function listControls(devPath) {
+export async function listControls(devPath, allowlist = DEFAULT_CONTROL_ALLOWLIST) {
     const stdout = await spawn([V4L2_CTL, '-d', devPath, '--list-ctrls']);
-    return filterControls(parseListCtrls(stdout));
+    return filterControls(parseListCtrls(stdout), allowlist);
 }
 
-export async function enumerateCandidates() {
+export async function enumerateCandidates(allowlist = DEFAULT_CONTROL_ALLOWLIST) {
     const candidates = [];
     for (const devPath of enumerateDevicePaths()) {
         try {
-            const controls = await listControls(devPath);
+            const controls = await listControls(devPath, allowlist);
             if (controls.length > 0)
                 candidates.push({devPath, controls});
         } catch {
@@ -101,6 +101,27 @@ export async function enumerateCandidates() {
         }
     }
     return candidates;
+}
+
+// For the prefs UI: every writable, non-read-only integer control found on
+// any v4l2 device, ignoring the allowlist entirely. Return value is a sorted
+// array of unique names.
+export async function enumerateAllWritableControls() {
+    const names = new Set();
+    for (const devPath of enumerateDevicePaths()) {
+        try {
+            const stdout = await spawn([V4L2_CTL, '-d', devPath, '--list-ctrls']);
+            for (const c of parseListCtrls(stdout)) {
+                if (!c.readOnly && !c.inactive && c.type === 'int'
+                    && Number.isFinite(c.min) && Number.isFinite(c.max)
+                    && CONTROL_NAME_RE.test(c.name))
+                    names.add(c.name);
+            }
+        } catch {
+            // unqueryable device — skip
+        }
+    }
+    return [...names].sort();
 }
 
 export async function setControl(devPath, name, value, {min, max}) {

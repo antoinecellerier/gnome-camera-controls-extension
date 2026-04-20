@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<schemalist>
+  <schema id="org.gnome.shell.extensions.camera-controls"
+          path="/org/gnome/shell/extensions/camera-controls/">
+    <key name="allowed-controls" type="as">
+      <default>['exposure','exposure_absolute','analogue_gain','digital_gain','gain','brightness']</default>
+      <summary>v4l2 control names the extension is allowed to expose</summary>
+      <description>
+        Names of v4l2 controls that, when found on an active camera's v4l2
+        subdev or video node, will be rendered as sliders in the panel menu.
+        Only writable, non-read-only controls that appear in this list will
+        be shown. Names must match the v4l2 control-name shape
+        ([a-z][a-z0-9_]*).
+      </description>
+    </key>
+  </schema>
+</schemalist>
