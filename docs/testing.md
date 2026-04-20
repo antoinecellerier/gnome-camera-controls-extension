@@ -12,7 +12,11 @@ journalctl --user -f /usr/bin/gnome-shell    # tail logs while testing
 ## End-to-end steps
 
 1. **Idle.** No camera client open → no indicator. `wpctl status` shows no Video/Source in state RUNNING.
-2. **Open a webcam consumer** (e.g. `cheese`). Indicator should appear *immediately* (event-driven; no poll window).
+2. **Open a webcam consumer.** A real app (`cheese`, Firefox on webcamtests.com, Chromium) or a headless trigger:
+   ```
+   gst-launch-1.0 pipewiresrc target-object=libcamera_input.__SB_.PC00.LNK1 ! videoconvert ! fakesink
+   ```
+   (substitute your node's `node.name` from `pw-cli ls Node` output). `libcamerasrc` or `gst-launch-1.0 v4l2src` bypass PipeWire and will NOT trigger the monitor — by design, since anything bypassing PipeWire is something GNOME Shell wouldn't know about either. The indicator should appear *immediately* (event-driven; no poll window).
 3. **Controls visible.** Clicking the indicator shows sliders at the values reported by `v4l2-ctl -d <matched> --list-ctrls`. The matched device is logged to journalctl.
 4. **Slide each slider** → verify with `v4l2-ctl -d <matched> -C <ctrl>` that the value written matches the slider position.
 5. **Multi-camera** (if available): plug in a second camera, open it from a different app, verify the sliders switch to *that* camera's controls.
