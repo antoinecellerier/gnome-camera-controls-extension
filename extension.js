@@ -9,55 +9,87 @@ import {resolveCandidate, sysfsAncestor} from './sysfs.js';
 
 export default class CameraControlsExtension extends Extension {
     enable() {
-        this._enabled = true;
-        this._indicator = new CameraControlsIndicator();
-        Main.panel.addToStatusArea(this.uuid, this._indicator);
-        this._candidates = null;
-        this._monitor = null;
-        this._run();
+        try {
+            this._enabled = true;
+            this._indicator = new CameraControlsIndicator();
+            Main.panel.addToStatusArea(this.uuid, this._indicator);
+            this._candidates = null;
+            this._monitor = null;
+            this._run().catch(e => logError?.(e, 'CameraControls._run'));
+        } catch (e) {
+            logError?.(e, 'CameraControls.enable');
+        }
     }
 
     async _run() {
-        const {ok, failures} = await probe();
+        let failures = [];
+        let ok = true;
+        try {
+            const r = await probe();
+            failures = r.failures;
+            ok = r.ok;
+        } catch (e) {
+            logError?.(e, 'probe');
+            failures = [{
+                id: 'probe-error',
+                label: 'Prerequisite probe threw',
+                explanation: String(e?.message ?? e),
+                fixCommand: 'journalctl --user -b /usr/bin/gnome-shell | tail -40',
+                blocking: true,
+            }];
+            ok = false;
+        }
         if (!this._enabled) return;
 
         if (failures.length > 0) {
-            this._indicator.showError(failures, () => {
-                if (this._enabled) {
-                    this._stopMonitor();
-                    this._run();
-                }
-            });
+            this._indicator.showError(failures, () => this._restart());
         } else {
             this._indicator.hideAll();
         }
 
         if (!ok) return;
 
-        await this._startMonitor();
+        try {
+            await this._startMonitor();
+        } catch (e) {
+            logError?.(e, '_startMonitor');
+            if (this._enabled) {
+                this._indicator.showError([{
+                    id: 'monitor-start',
+                    label: 'Camera monitor helper failed to start',
+                    explanation: String(e?.message ?? e),
+                    fixCommand: 'journalctl --user -b /usr/bin/gnome-shell | tail -40',
+                    blocking: true,
+                }], () => this._restart());
+            }
+        }
+    }
+
+    _restart() {
+        if (!this._enabled) return;
+        this._stopMonitor();
+        this._candidates = null;
+        this._run().catch(e => logError?.(e, 'CameraControls._run (restart)'));
     }
 
     async _startMonitor() {
         if (this._monitor) return;
-        this._monitor = new CameraMonitor();
-        this._monitor.on('live', (node) => this._onLive(node));
-        this._monitor.on('idle', () => this._onIdle());
-        try {
-            await this._monitor.start();
-        } catch (e) {
-            logError?.(e, 'CameraMonitor.start');
-            this._monitor = null;
-        }
+        const helperPath = this.dir.get_child('camera-monitor-helper.js').get_path();
+        const monitor = new CameraMonitor(helperPath);
+        monitor.on('live', (snapshot) => this._onLive(snapshot).catch(e => logError?.(e, '_onLive')));
+        monitor.on('idle', () => this._onIdle());
+        monitor.on('error', (err) => this._onMonitorError(err));
+        this._monitor = monitor;
+        await monitor.start();
     }
 
     _stopMonitor() {
-        if (this._monitor) {
-            try { this._monitor.stop(); } catch (e) { logError?.(e); }
-            this._monitor = null;
-        }
+        if (!this._monitor) return;
+        try { this._monitor.stop(); } catch (e) { logError?.(e); }
+        this._monitor = null;
     }
 
-    async _onLive(node) {
+    async _onLive(snapshot) {
         if (!this._enabled) return;
 
         if (!this._candidates) {
@@ -69,23 +101,20 @@ export default class CameraControlsExtension extends Extension {
                 }));
             } catch (e) {
                 logError?.(e, 'enumerateCandidates');
-                return;
+                this._candidates = [];
             }
             if (!this._enabled) return;
         }
 
-        const matched = this._matchCandidate(node);
+        const matched = this._matchCandidate(snapshot);
         if (!matched) {
             this._indicator.showError([{
                 id: 'no-match',
                 label: 'Active camera not recognized',
                 explanation: 'No /dev/v4l-subdev* or /dev/video* matched the live PipeWire source.',
-                fixCommand: 'Check journalctl --user -f for details.',
+                fixCommand: 'journalctl --user -b /usr/bin/gnome-shell | tail -40',
                 blocking: true,
-            }], () => {
-                this._candidates = null;
-                if (this._enabled) this._onLive(node);
-            });
+            }], () => this._restart());
             return;
         }
 
@@ -99,9 +128,7 @@ export default class CameraControlsExtension extends Extension {
         if (!this._enabled) return;
 
         this._indicator.showControl({
-            description: CameraMonitor.getProp(node, 'node.description')
-                ?? CameraMonitor.getProp(node, 'node.name')
-                ?? 'Camera',
+            description: snapshot?.description ?? 'Camera',
             devPath: matched.devPath,
             controls: freshControls,
         });
@@ -112,43 +139,48 @@ export default class CameraControlsExtension extends Extension {
         this._indicator.hideAll();
     }
 
-    _matchCandidate(node) {
+    _onMonitorError(err) {
+        if (!this._enabled) return;
+        this._stopMonitor();
+        this._indicator.showError([{
+            id: 'monitor-error',
+            label: 'Camera monitor helper stopped',
+            explanation: String(err?.message ?? err ?? 'unknown'),
+            fixCommand: 'Click Retry to restart the helper.',
+            blocking: true,
+        }], () => this._restart());
+    }
+
+    _matchCandidate(snapshot) {
         if (!this._candidates?.length) return null;
 
-        // 1) v4l2 backend (UVC): node's api.v4l2.path equals a candidate's devPath.
-        const v4l2Path = CameraMonitor.getProp(node, 'api.v4l2.path');
-        if (v4l2Path) {
-            const hit = this._candidates.find(c => c.devPath === v4l2Path);
+        if (snapshot?.api_v4l2_path) {
+            const hit = this._candidates.find(c => c.devPath === snapshot.api_v4l2_path);
             if (hit) return hit;
         }
 
-        // 2) libcamera backend: resolve parent Wp.Device, compare ACPI path
-        //    (or sysfs prefix as a fallback) against each candidate.
-        const deviceId = CameraMonitor.getProp(node, 'device.id');
-        const parent = deviceId && this._monitor
-            ? this._monitor.findDeviceByBoundId(parseInt(deviceId, 10))
-            : null;
-        if (parent) {
-            const libcameraAcpi = CameraMonitor.getProp(parent, 'api.libcamera.path');
-            if (libcameraAcpi) {
-                const hit = this._candidates.find(c => c.acpiPath === libcameraAcpi);
-                if (hit) return hit;
-            }
-            const busPath = CameraMonitor.getProp(parent, 'device.bus-path');
-            if (busPath) {
-                const hit = this._candidates.find(c => c.sysfsPath && sysfsAncestor(busPath, c.sysfsPath));
-                if (hit) return hit;
-            }
+        const dev = snapshot?.device;
+        if (dev?.api_libcamera_path) {
+            const hit = this._candidates.find(c => c.acpiPath === dev.api_libcamera_path);
+            if (hit) return hit;
+        }
+        if (dev?.bus_path) {
+            const hit = this._candidates.find(c => c.sysfsPath && sysfsAncestor(dev.bus_path, c.sysfsPath));
+            if (hit) return hit;
         }
 
         return null;
     }
 
     disable() {
-        this._enabled = false;
-        this._stopMonitor();
-        this._indicator?.destroy();
-        this._indicator = null;
-        this._candidates = null;
+        try {
+            this._enabled = false;
+            this._stopMonitor();
+            this._indicator?.destroy();
+            this._indicator = null;
+            this._candidates = null;
+        } catch (e) {
+            logError?.(e, 'CameraControls.disable');
+        }
     }
 }

@@ -4,7 +4,7 @@
 
 We need to know when *any* camera client opens/closes the camera, with zero polling. On a modern Linux desktop, PipeWire is the substrate both for v4l2 and libcamera backends — so a single subscription at the PipeWire graph level covers both.
 
-The extension uses `gir1.2-wp-0.5` (`Wp-0.5.typelib`) to import WirePlumber directly in GJS: `import Wp from 'gi://Wp'`. `Wp.Core` uses the default `GMainContext`, which is GNOME Shell's own main loop, so there's no thread or subprocess involved — PipeWire signals flow straight into JS callbacks.
+The extension uses `gir1.2-wp-0.5` (`Wp-0.5.typelib`) to import WirePlumber, **but only inside a child process** (`camera-monitor-helper.js`) — never in gnome-shell's own process. `Wp.init()` called in gnome-shell crashed the shell (see `prereqs.md` → *Why a subprocess*), so the helper isolates all native code from the compositor. The helper uses `Wp.Core` with the default `GMainContext` (the child's own main loop), subscribes to PipeWire events, and forwards them as JSON-lines on its stdout. The parent (`cameraMonitor.js`) reads those lines asynchronously with `Gio.DataInputStream.read_line_async` and re-emits `'live'` / `'idle'` to the rest of the extension.
 
 ## Key Wp objects
 
