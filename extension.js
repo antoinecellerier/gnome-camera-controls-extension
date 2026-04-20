@@ -4,7 +4,7 @@ import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import {probe} from './prereqs.js';
 import {CameraControlsIndicator} from './indicator.js';
 import {CameraMonitor} from './cameraMonitor.js';
-import {enumerateCandidates, listControls} from './v4l2.js';
+import {enumerateCandidates, listControls, setControl} from './v4l2.js';
 import {resolveCandidate, sysfsAncestor} from './sysfs.js';
 
 export default class CameraControlsExtension extends Extension {
@@ -136,7 +136,25 @@ export default class CameraControlsExtension extends Extension {
 
     _onIdle() {
         if (!this._enabled) return;
-        this._indicator.hideAll();
+        this._flushPendingOnIdle().finally(() => {
+            if (this._enabled) this._indicator.hideAll();
+        });
+    }
+
+    async _flushPendingOnIdle() {
+        if (!this._indicator) return;
+        const {devPath, controls} = this._indicator.getIntendedValues();
+        if (!devPath || !controls?.length) return;
+        // With the camera closed, the sensor subdev accepts writes again;
+        // anything the user set while streaming applies now and will be in
+        // effect the next time a client opens the camera.
+        for (const c of controls) {
+            try {
+                await setControl(devPath, c.name, c.value, {min: c.min, max: c.max});
+            } catch (e) {
+                logError?.(e, `flush setControl ${c.name}`);
+            }
+        }
     }
 
     _onMonitorError(err) {

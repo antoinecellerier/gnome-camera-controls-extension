@@ -103,7 +103,7 @@ const CameraControlSliderItem = GObject.registerClass(
 
         async _verifyAsync(expected, serial) {
             if (serial !== this._writeSerial) return;
-            if (this._pendingTimeout) return; // newer drag in-flight
+            if (this._pendingTimeout) return;
             let actual;
             try {
                 actual = await readControlValue(this._devPath, this._control.name);
@@ -114,28 +114,34 @@ const CameraControlSliderItem = GObject.registerClass(
             if (serial !== this._writeSerial || this._pendingTimeout) return;
             const range = this._control.max - this._control.min;
             const tolerance = Math.max(1, Math.round(range * 0.01));
-            if (Math.abs(actual - expected) > tolerance) {
-                this._snapSliderTo(actual);
-                this._setOverridden(true);
-            }
+            // Leave the slider where the user put it. If the subdev refused the
+            // write mid-capture, mark the row as "pending": the value will be
+            // re-applied when the camera goes idle (see extension.js _onIdle).
+            this._setPending(Math.abs(actual - expected) > tolerance);
         }
 
-        _snapSliderTo(value) {
-            this._valueLabel.text = String(value);
-            this._ignoreNextChange = true;
-            this._slider.value = Math.max(0, Math.min(1, this._valueToFrac(value)));
-        }
-
-        _setOverridden(overridden) {
-            if (this._overridden === overridden) return;
-            this._overridden = overridden;
-            if (overridden) {
+        _setPending(pending) {
+            if (this._pending === pending) return;
+            this._pending = pending;
+            if (pending) {
                 this._nameLabel.set_style('min-width: 9em; color: #eebb55;');
-                this._nameLabel.text = `⚠ ${this._control.name}`;
+                this._nameLabel.text = `${this._control.name} ⌛`;
+                this._valueLabel.set_style('min-width: 3.5em; text-align: right; color: #eebb55;');
             } else {
                 this._nameLabel.set_style('min-width: 9em;');
                 this._nameLabel.text = this._control.name;
+                this._valueLabel.set_style('min-width: 3.5em; text-align: right;');
             }
+        }
+
+        getIntendedValue() {
+            return {
+                name: this._control.name,
+                value: this._currentValue(),
+                min: this._control.min,
+                max: this._control.max,
+                pending: this._pending === true,
+            };
         }
 
         destroy() {
@@ -204,6 +210,8 @@ export const CameraControlsIndicator = GObject.registerClass(
         showControl({description, devPath, controls}) {
             this.menu.removeAll();
             this._icon.icon_name = 'camera-photo-symbolic';
+            this._sliderItems = [];
+            this._devPath = devPath;
 
             const header = new PopupMenu.PopupMenuItem(description ?? 'Camera', {reactive: false});
             header.label.set_style('font-weight: bold;');
@@ -216,15 +224,30 @@ export const CameraControlsIndicator = GObject.registerClass(
             this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
             for (const control of controls) {
-                this.menu.addMenuItem(new CameraControlSliderItem(control, devPath));
+                const item = new CameraControlSliderItem(control, devPath);
+                this._sliderItems.push(item);
+                this.menu.addMenuItem(item);
             }
 
+            const footer = new PopupMenu.PopupMenuItem('⌛ = queued for next camera open', {reactive: false});
+            footer.label.set_style('font-size: smaller; opacity: 0.5;');
+            this.menu.addMenuItem(footer);
+
             this.visible = true;
+        }
+
+        getIntendedValues() {
+            return {
+                devPath: this._devPath ?? null,
+                controls: (this._sliderItems ?? []).map(it => it.getIntendedValue()),
+            };
         }
 
         hideAll() {
             this.visible = false;
             this.menu.removeAll();
+            this._sliderItems = [];
+            this._devPath = null;
         }
     }
 );

@@ -29,15 +29,24 @@ Adding a new control means adding it to this list plus, if new hardware, updatin
 - Slider values are clamped to the `[min, max]` reported by `v4l2-ctl --list-ctrls` before being formatted.
 - `v4l2-ctl` is always invoked with a pre-built argv array via `Gio.Subprocess` — never through a shell. No user-typed or scraped string flows into argv besides the control name (which comes from `--list-ctrls` parsing) and integer value (which comes from the slider, clamped).
 
-## libcamera override detection
+## Mid-stream write behavior and the "queued" state
 
-On IPU6 hardware running the libcamera "simple" IPA (default on Debian/Ubuntu without Intel's proprietary `ipu6-camera-bins`), the AE/AGC loop in libcamera continuously rewrites `exposure` and `analogue_gain` on the sensor subdev while the camera is streaming. Our writes via `v4l2-ctl -c` are accepted but immediately overwritten, so the sliders *appear* broken.
+Two quite different things happen on IPU6 with the libcamera "simple" IPA, depending on whether AGC is enabled in the IPA tuning:
 
-To make this visible rather than silent, every slider write is verified 300 ms later via `v4l2-ctl -C`: if the read-back value doesn't match what we wrote (within 1% of range), the slider snaps back to the actual value and the row gets marked with a `⚠` and a yellow-tinted name. The mark clears as soon as the user touches the slider again.
+- **AGC enabled (upstream default).** libcamera's auto-gain loop rewrites `exposure` and `analogue_gain` on the sensor subdev every frame. Our `v4l2-ctl -c` writes are clobbered almost immediately. No user-facing path from this extension can win that race.
+- **AGC disabled** (as in `~/stuff/ipu6-camera-notes.md` — user edits `/usr/share/libcamera/ipa/simple/ov2740.yaml` to drop the `Agc:` algorithm). libcamera no longer rewrites per frame, but the sensor subdev's exposure/gain registers still refuse mid-stream `v4l2-ctl` writes: the value read back doesn't change until the stream stops. Whatever value is in place when streaming *starts* is what stays. `digital_gain` is different — it lives in software post-processing and accepts writes at any time.
 
-`digital_gain` is not under libcamera's AE loop in this IPA and survives writes, which is why it's the only control that "works" end-to-end on this machine. On UVC webcams and other hardware without a libcamera AE loop, all allowlisted controls behave normally — there's nothing to override them.
+The UX works around this with a "queued" state. After each slider write, the extension reads back 300 ms later via `v4l2-ctl -C`. If the value drifted (>1% of range) from what we wrote:
 
-Workarounds for users who need to pin exposure/gain on IPU6: install `ipu6-camera-bins` + the vendor IPA, or use a client that drives libcamera directly (e.g. `gst-launch-1.0 libcamerasrc ae-enable=false exposure-time=N`) rather than going through PipeWire.
+- The slider is **left at the user's chosen position** (not snapped back).
+- The row is marked with `⌛` and a yellow tint, and a footer explains the meaning.
+- The intended value is remembered.
+
+When the camera goes idle (PipeWire `state-changed` away from RUNNING), the extension writes every slider's intended value via `setControl` — with the stream stopped, the subdev accepts the writes and they'll be in effect the next time a client opens the camera. `digital_gain` skips this queued state entirely because its writes take effect immediately.
+
+On UVC webcams (no libcamera AE, no mid-stream refusal) every control behaves normally — the verify read-back matches, no `⌛`, no queuing.
+
+Workarounds for users who need live mid-stream exposure/gain on IPU6: install Intel's `ipu6-camera-bins` + vendor IPA, or drive libcamera directly (`gst-launch-1.0 libcamerasrc ae-enable=false exposure-time=N …`) rather than going through PipeWire.
 
 ## What we do NOT do
 
