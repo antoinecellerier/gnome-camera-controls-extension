@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import GLib from 'gi://GLib';
-import Gio from 'gi://Gio';
+
+import {spawn} from './process.js';
 
 const CONTROL_ALLOWLIST = new Set([
     'exposure',
@@ -38,38 +39,6 @@ function enumerateDevicePaths() {
         }
     }
     return paths;
-}
-
-async function spawn(argv) {
-    return new Promise((resolve, reject) => {
-        let proc;
-        try {
-            proc = new Gio.Subprocess({
-                argv,
-                flags: Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE,
-            });
-            proc.init(null);
-        } catch (e) {
-            reject(e);
-            return;
-        }
-        proc.communicate_utf8_async(null, null, (_, res) => {
-            try {
-                const [, stdout, stderr] = proc.communicate_utf8_finish(res);
-                const exit = proc.get_exit_status();
-                if (exit !== 0) {
-                    const err = new Error(`${argv.join(' ')} exited ${exit}: ${stderr.trim()}`);
-                    err.exitStatus = exit;
-                    err.stderr = stderr;
-                    reject(err);
-                    return;
-                }
-                resolve(stdout);
-            } catch (e) {
-                reject(e);
-            }
-        });
-    });
 }
 
 function parseListCtrls(stdout) {

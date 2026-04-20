@@ -1,35 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import GLib from 'gi://GLib';
-import Gio from 'gi://Gio';
 
-async function spawn(argv) {
-    return new Promise((resolve, reject) => {
-        let proc;
-        try {
-            proc = new Gio.Subprocess({
-                argv,
-                flags: Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE,
-            });
-            proc.init(null);
-        } catch (e) {
-            reject(e);
-            return;
-        }
-        proc.communicate_utf8_async(null, null, (_, res) => {
-            try {
-                const [, stdout, stderr] = proc.communicate_utf8_finish(res);
-                if (proc.get_exit_status() !== 0) {
-                    reject(new Error(`${argv.join(' ')}: ${stderr.trim()}`));
-                } else {
-                    resolve(stdout);
-                }
-            } catch (e) {
-                reject(e);
-            }
-        });
-    });
-}
+import {spawn} from './process.js';
 
 function readTextFile(path) {
     try {

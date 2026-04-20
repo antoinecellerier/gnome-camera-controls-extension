@@ -24,7 +24,6 @@ const CameraControlSliderItem = GObject.registerClass(
             this._pendingTimeout = 0;
             this._verifyTimeout = 0;
             this._writeSerial = 0;
-            this._ignoreNextChange = false;
 
             const range = control.max - control.min;
             const startFrac = range > 0 ? (control.current - control.min) / range : 0;
@@ -86,10 +85,6 @@ const CameraControlSliderItem = GObject.registerClass(
         }
 
         _onSliderChanged() {
-            if (this._ignoreNextChange) {
-                this._ignoreNextChange = false;
-                return;
-            }
             this._valueLabel.text = String(this._currentValue());
             if (this._autoManaged) return;
 

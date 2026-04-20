@@ -9,6 +9,7 @@ extension.js                  lifecycle (enable/disable)
 │    └──► camera-monitor-helper.js   CHILD PROCESS — all Wp/PipeWire code lives here
 ├── v4l2.js                   v4l2-ctl wrappers: enumerate, list, set
 ├── sysfs.js                  udevadm-info helper; node → candidate matching
+├── process.js                shared Gio.Subprocess helper (argv-only)
 └── indicator.js              PanelMenu.Button with three modes: hidden / control / error
 ```
 

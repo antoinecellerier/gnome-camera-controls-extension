@@ -29,47 +29,40 @@ export default class CameraControlsExtension extends Extension {
     }
 
     async _run() {
-        let failures = [];
-        let ok = true;
+        let probeResult;
         try {
-            const r = await probe();
-            failures = r.failures;
-            ok = r.ok;
+            probeResult = await probe();
         } catch (e) {
             logError?.(e, 'probe');
-            failures = [{
-                id: 'probe-error',
-                label: 'Prerequisite probe threw',
-                explanation: String(e?.message ?? e),
-                fixCommand: 'journalctl --user -b /usr/bin/gnome-shell | tail -40',
-                blocking: true,
-            }];
-            ok = false;
+            this._showError('probe-error', 'Prerequisite probe threw', e);
+            return;
         }
         if (!this._enabled) return;
 
-        if (failures.length > 0) {
-            this._indicator.showError(failures, () => this._restart());
-        } else {
+        if (probeResult.failures.length > 0)
+            this._indicator.showError(probeResult.failures, () => this._restart());
+        else
             this._indicator.hideAll();
-        }
 
-        if (!ok) return;
+        if (!probeResult.ok) return;
 
         try {
             await this._startMonitor();
         } catch (e) {
             logError?.(e, '_startMonitor');
-            if (this._enabled) {
-                this._indicator.showError([{
-                    id: 'monitor-start',
-                    label: 'Camera monitor helper failed to start',
-                    explanation: String(e?.message ?? e),
-                    fixCommand: 'journalctl --user -b /usr/bin/gnome-shell | tail -40',
-                    blocking: true,
-                }], () => this._restart());
-            }
+            this._showError('monitor-start', 'Camera monitor helper failed to start', e);
         }
+    }
+
+    _showError(id, label, err) {
+        if (!this._enabled) return;
+        this._indicator.showError([{
+            id,
+            label,
+            explanation: String(err?.message ?? err ?? 'unknown'),
+            fixCommand: 'journalctl --user -b /usr/bin/gnome-shell | tail -40',
+            blocking: true,
+        }], () => this._restart());
     }
 
     _restart() {
@@ -115,13 +108,8 @@ export default class CameraControlsExtension extends Extension {
 
         const matched = this._matchCandidate(snapshot);
         if (!matched) {
-            this._indicator.showError([{
-                id: 'no-match',
-                label: 'Active camera not recognized',
-                explanation: 'No /dev/v4l-subdev* or /dev/video* matched the live PipeWire source.',
-                fixCommand: 'journalctl --user -b /usr/bin/gnome-shell | tail -40',
-                blocking: true,
-            }], () => this._restart());
+            this._showError('no-match', 'Active camera not recognized',
+                'No /dev/v4l-subdev* or /dev/video* matched the live PipeWire source.');
             return;
         }
 
@@ -194,13 +182,7 @@ export default class CameraControlsExtension extends Extension {
     _onMonitorError(err) {
         if (!this._enabled) return;
         this._stopMonitor();
-        this._indicator.showError([{
-            id: 'monitor-error',
-            label: 'Camera monitor helper stopped',
-            explanation: String(err?.message ?? err ?? 'unknown'),
-            fixCommand: 'Click Retry to restart the helper.',
-            blocking: true,
-        }], () => this._restart());
+        this._showError('monitor-error', 'Camera monitor helper stopped', err);
     }
 
     _matchCandidate(snapshot) {
