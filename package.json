@@ -1,0 +1,13 @@
+{
+  "name": "gnome-camera-controls-extension",
+  "private": true,
+  "type": "module",
+  "description": "Lint harness for the Camera Controls GNOME Shell extension. Not published to npm; not shipped in the extension zip.",
+  "scripts": {
+    "lint": "eslint ."
+  },
+  "devDependencies": {
+    "eslint": "^9.0.0",
+    "globals": "^15.0.0"
+  }
+}
