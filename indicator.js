@@ -30,29 +30,28 @@ const CameraControlSliderItem = GObject.registerClass(
             const startFrac = range > 0 ? (control.current - control.min) / range : 0;
 
             this._nameLabel = new St.Label({
-                text: control.name,
                 y_align: Clutter.ActorAlign.CENTER,
                 x_expand: false,
-                style: 'min-width: 9em;',
+                style_class: 'ccx-name',
             });
 
             this._slider = new Slider(Math.max(0, Math.min(1, startFrac)));
             this._slider.x_expand = true;
             this._slider.y_align = Clutter.ActorAlign.CENTER;
-            this._slider.set_style('min-width: 10em; margin: 0 8px;');
+            this._slider.add_style_class_name('ccx-slider');
             this._slider.connect('notify::value', () => this._onSliderChanged());
 
             this._valueLabel = new St.Label({
                 text: String(control.current),
                 y_align: Clutter.ActorAlign.CENTER,
                 x_expand: false,
-                style: 'min-width: 3.5em; text-align: right;',
+                style_class: 'ccx-value',
             });
 
             const row = new St.BoxLayout({
                 vertical: false,
                 x_expand: true,
-                style: 'spacing: 4px;',
+                style_class: 'ccx-row',
             });
             row.add_child(this._nameLabel);
             row.add_child(this._slider);
@@ -60,24 +59,30 @@ const CameraControlSliderItem = GObject.registerClass(
 
             this.add_child(row);
 
-            if (this._autoManaged) this._applyAutoManagedStyling();
+            this._renderLabel();
+            if (this._autoManaged) this._applyLockedStyling();
         }
 
-        _applyAutoManagedStyling() {
-            this._nameLabel.text = `${this._control.name} 🔒`;
-            this._nameLabel.set_style('min-width: 9em; color: #999; text-decoration: line-through;');
-            this._valueLabel.set_style('min-width: 3.5em; text-align: right; color: #999;');
-            this._slider.set_style('min-width: 10em; margin: 0 8px; opacity: 0.5;');
+        _renderLabel() {
+            const name = this._control.name;
+            if (this._autoManaged) {
+                this._nameLabel.text = `${name} 🔒`;
+            } else if (this._pending) {
+                this._nameLabel.text = `${name} ⌛`;
+            } else {
+                this._nameLabel.text = name;
+            }
+        }
+
+        _applyLockedStyling() {
+            this._nameLabel.add_style_class_name('ccx-locked-text');
+            this._valueLabel.add_style_class_name('ccx-locked-text');
+            this._slider.add_style_class_name('ccx-locked-slider');
         }
 
         _currentValue() {
             const {min, max} = this._control;
             return Math.max(min, Math.min(max, Math.round(min + this._slider.value * (max - min))));
-        }
-
-        _valueToFrac(value) {
-            const range = this._control.max - this._control.min;
-            return range > 0 ? (value - this._control.min) / range : 0;
         }
 
         _onSliderChanged() {
@@ -86,7 +91,7 @@ const CameraControlSliderItem = GObject.registerClass(
                 return;
             }
             this._valueLabel.text = String(this._currentValue());
-            if (this._autoManaged) return; // writing is futile; just track the slider
+            if (this._autoManaged) return;
 
             this._setPending(false);
             if (this._pendingTimeout) GLib.source_remove(this._pendingTimeout);
@@ -115,8 +120,7 @@ const CameraControlSliderItem = GObject.registerClass(
         }
 
         async _verifyAsync(expected, serial) {
-            if (serial !== this._writeSerial) return;
-            if (this._pendingTimeout) return;
+            if (serial !== this._writeSerial || this._pendingTimeout) return;
             let actual;
             try {
                 actual = await readControlValue(this._devPath, this._control.name);
@@ -127,24 +131,13 @@ const CameraControlSliderItem = GObject.registerClass(
             if (serial !== this._writeSerial || this._pendingTimeout) return;
             const range = this._control.max - this._control.min;
             const tolerance = Math.max(1, Math.round(range * 0.01));
-            // Leave the slider where the user put it. If the subdev refused the
-            // write mid-capture, mark the row as "pending": the value will be
-            // re-applied when the camera goes idle (see extension.js _onIdle).
             this._setPending(Math.abs(actual - expected) > tolerance);
         }
 
         _setPending(pending) {
             if (this._pending === pending) return;
             this._pending = pending;
-            if (pending) {
-                this._nameLabel.set_style('min-width: 9em; color: #eebb55;');
-                this._nameLabel.text = `${this._control.name} ⌛`;
-                this._valueLabel.set_style('min-width: 3.5em; text-align: right; color: #eebb55;');
-            } else {
-                this._nameLabel.set_style('min-width: 9em;');
-                this._nameLabel.text = this._control.name;
-                this._valueLabel.set_style('min-width: 3.5em; text-align: right;');
-            }
+            this._renderLabel();
         }
 
         getIntendedValue() {
@@ -189,23 +182,24 @@ export const CameraControlsIndicator = GObject.registerClass(
             this._icon.icon_name = 'dialog-warning-symbolic';
 
             const header = new PopupMenu.PopupMenuItem('Camera Controls — setup required', {reactive: false});
-            header.label.set_style('font-weight: bold;');
+            header.label.add_style_class_name('ccx-title');
             this.menu.addMenuItem(header);
             this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
             for (const f of failures) {
-                const label = new PopupMenu.PopupMenuItem(f.label, {reactive: false});
-                if (!f.blocking)
-                    label.label.set_style('color: #eebb55;');
+                const label = new PopupMenu.PopupMenuItem(
+                    f.blocking ? f.label : `${f.label} (optional)`,
+                    {reactive: false},
+                );
                 this.menu.addMenuItem(label);
 
                 const explain = new PopupMenu.PopupMenuItem(f.explanation, {reactive: false});
-                explain.label.set_style('font-size: smaller; padding-left: 1em;');
+                explain.label.add_style_class_name('ccx-explain');
+                explain.label.add_style_class_name('dim-label');
                 this.menu.addMenuItem(explain);
 
                 const fix = new PopupMenu.PopupMenuItem(f.fixCommand, {reactive: false});
-                fix.label.add_style_class_name('camera-controls-error-fix');
-                fix.label.set_style('padding-left: 1em;');
+                fix.label.add_style_class_name('ccx-fix');
                 this.menu.addMenuItem(fix);
 
                 this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
@@ -228,11 +222,12 @@ export const CameraControlsIndicator = GObject.registerClass(
             this._devPath = devPath;
 
             const header = new PopupMenu.PopupMenuItem(description ?? 'Camera', {reactive: false});
-            header.label.set_style('font-weight: bold;');
+            header.label.add_style_class_name('ccx-title');
             this.menu.addMenuItem(header);
 
             const pathItem = new PopupMenu.PopupMenuItem(devPath, {reactive: false});
-            pathItem.label.set_style('font-size: smaller; opacity: 0.6;');
+            pathItem.label.add_style_class_name('ccx-hint');
+            pathItem.label.add_style_class_name('dim-label');
             this.menu.addMenuItem(pathItem);
 
             this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
@@ -253,7 +248,8 @@ export const CameraControlsIndicator = GObject.registerClass(
             if (sawLocked) legendParts.push('🔒 = auto-managed by libcamera');
             if (legendParts.length) {
                 const footer = new PopupMenu.PopupMenuItem(legendParts.join(' · '), {reactive: false});
-                footer.label.set_style('font-size: smaller; opacity: 0.5;');
+                footer.label.add_style_class_name('ccx-hint');
+                footer.label.add_style_class_name('dim-label');
                 this.menu.addMenuItem(footer);
             }
 

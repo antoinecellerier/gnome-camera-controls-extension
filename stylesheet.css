@@ -1,5 +1,45 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 
-.camera-controls-error-fix {
+.ccx-title {
+    font-weight: bold;
+}
+
+.ccx-hint {
+    font-size: 0.85em;
+}
+
+.ccx-fix {
     font-family: monospace;
+    padding-left: 1em;
+}
+
+.ccx-explain {
+    font-size: 0.9em;
+    padding-left: 1em;
+}
+
+.ccx-row {
+    spacing: 4px;
+}
+
+.ccx-name {
+    min-width: 9em;
+}
+
+.ccx-value {
+    min-width: 3.5em;
+    text-align: right;
+}
+
+.ccx-slider {
+    min-width: 10em;
+    margin: 0 8px;
+}
+
+.ccx-locked-text {
+    text-decoration: line-through;
+}
+
+.ccx-locked-slider {
+    opacity: 0.5;
 }
