@@ -4,6 +4,13 @@
 // Standalone helper: runs all WirePlumber/PipeWire code in a child process so
 // a native crash here CANNOT take down gnome-shell. Speaks JSON-lines on stdout.
 //
+// NOTE: shexli flags this file with EGO-P-007 ("not reachable from extension.js
+// or prefs.js imports"). That is expected and must not be fixed by adding an
+// import — the helper is launched as a separate `gjs -m` subprocess (see
+// extension.js `_startMonitor`) precisely so libpipewire/libwireplumber cannot
+// crash gnome-shell. Static-importing it would load that native code in-process
+// and defeat the isolation.
+//
 // Events written to stdout, one JSON object per line, always with a `type`:
 //   {"type":"ready"}                       // Wp.Core connected, initial enumeration done
 //   {"type":"live", bound_id, description, api_v4l2_path, device:{api, api_libcamera_path, bus_path}}

@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 
 import {spawn} from './process.js';
 
-function readTextFile(path) {
+Gio._promisify(Gio.File.prototype, 'load_contents_async');
+
+async function readTextFile(path) {
     try {
-        const [ok, bytes] = GLib.file_get_contents(path);
-        if (!ok) return null;
+        const file = Gio.File.new_for_path(path);
+        const [bytes] = await file.load_contents_async(null);
         return new TextDecoder().decode(bytes).trim();
     } catch {
         return null;
@@ -28,12 +31,12 @@ async function sysfsPathFor(devPath) {
     }
 }
 
-function acpiPathFromSysfsPath(sysfsPath) {
+async function acpiPathFromSysfsPath(sysfsPath) {
     if (!sysfsPath || sysfsPath.includes('..')) return null;
     let p = '/sys' + (sysfsPath.startsWith('/') ? sysfsPath : `/${sysfsPath}`);
     while (p && p !== '/sys' && p !== '/') {
         if (!p.startsWith('/sys/')) return null; // defensive: never leave /sys
-        const acpi = readTextFile(`${p}/firmware_node/path`);
+        const acpi = await readTextFile(`${p}/firmware_node/path`);
         if (acpi) return acpi;
         const slash = p.lastIndexOf('/');
         if (slash <= 0) break;
@@ -46,7 +49,7 @@ function acpiPathFromSysfsPath(sysfsPath) {
 
 export async function resolveCandidate(devPath) {
     const sysfsPath = await sysfsPathFor(devPath);
-    const acpiPath = acpiPathFromSysfsPath(sysfsPath);
+    const acpiPath = await acpiPathFromSysfsPath(sysfsPath);
     return {devPath, sysfsPath, acpiPath};
 }
 
