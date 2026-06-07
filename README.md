@@ -27,6 +27,19 @@ sudo apt install v4l-utils pipewire wireplumber gir1.2-wp-0.5
 
 ```
 ln -s "$PWD" ~/.local/share/gnome-shell/extensions/camera-controls@cellerier.net
-# log out / log in on Wayland (or Alt-F2 → r on X11)
+# log out / log in to reload the shell (Wayland; GNOME 49+ is Wayland-only)
+# on a legacy X11 session (GNOME ≤ 48) you can instead use Alt-F2 → r
 gnome-extensions enable camera-controls@cellerier.net
+```
+
+## Running on a newer GNOME
+
+`shell-version` in `metadata.json` only lists GNOME versions the extension has been
+tested against. GNOME Shell refuses to load an extension whose `shell-version` does
+not include the running release. Breaking changes for an extension this small are
+rare, so if you upgrade to a GNOME version before the extension is bumped, you can opt
+into running it anyway (at your own risk, and globally for *all* extensions):
+
+```
+gsettings set org.gnome.shell disable-extension-version-validation true
 ```

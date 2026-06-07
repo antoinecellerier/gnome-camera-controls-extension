@@ -2,8 +2,8 @@
   "uuid": "camera-controls@cellerier.net",
   "name": "Camera Controls",
   "description": "Adjust whatever v4l2 controls your camera exposes — exposure, brightness, white balance, auto-exposure mode, and more — from the top panel, while the camera is in use.",
-  "shell-version": ["45", "46", "47", "48", "49"],
-  "version": 1,
+  "shell-version": ["45", "46", "47", "48", "49", "50"],
+  "version": 2,
   "url": "https://github.com/antoinecellerier/gnome-camera-controls-extension",
   "settings-schema": "org.gnome.shell.extensions.camera-controls"
 }
